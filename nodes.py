@@ -4,9 +4,9 @@ import requests
 from io import BytesIO
 import os
 import numpy as np
-import imghdr
 import folder_paths
 import hashlib
+import server
 
 try:
     import imageio.v3 as iio
@@ -16,6 +16,18 @@ except ImportError:
 
 # Configure PIL security limits
 Image.MAX_IMAGE_PIXELS = 178956970
+
+
+def detect_image_type(content):
+    """
+    Detect image type from bytes using PIL instead of deprecated imghdr.
+    Returns format string like 'jpeg', 'png', 'webp', etc. or None if invalid.
+    """
+    try:
+        img = Image.open(BytesIO(content))
+        return img.format.lower() if img.format else None
+    except Exception:
+        return None
 
 
 def pil2tensor(img):
@@ -152,7 +164,7 @@ def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_p
     session.max_redirects = max_redirects
 
     response = session.get(
-        url, 
+        url,
         timeout=timeout,
         stream=True,
         headers={'User-Agent': 'ComfyUI'},
@@ -179,8 +191,8 @@ def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_p
     # Download content
     content = response.content
 
-    # Verify file magic number
-    img_type = imghdr.what(None, h=content)
+    # Verify file is a valid image using PIL
+    img_type = detect_image_type(content)
     if img_type is None:
         raise ValueError("File is not a valid image")
 
@@ -221,14 +233,14 @@ def load_image_from_path(file_path, max_pixels=100000000):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    # Verify magic number
-    img_type = imghdr.what(file_path)
-    if img_type is None:
-        raise ValueError("File is not a valid image")
-
     # Read file for validation
     with open(file_path, 'rb') as f:
         content = f.read()
+
+    # Verify file is a valid image using PIL
+    img_type = detect_image_type(content)
+    if img_type is None:
+        raise ValueError("File is not a valid image")
 
     # Load image safely
     img = load_image_safe(BytesIO(content), max_pixels)
@@ -244,23 +256,13 @@ class LoadImageByUrlOrPath:
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Get list of available input images
-        input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) 
-                if os.path.isfile(os.path.join(input_dir, f)) 
-                and f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'))]
-
         return {
             "required": {
-                "source": (["url", "file"], {"default": "url"}),
-            },
-            "optional": {
-                "url": ("STRING", {
-                    "multiline": True,
+                "url_or_path": ("STRING", {
+                    "multiline": False,
                     "default": "",
-                    "placeholder": "https://example.com/image.png"
+                    "placeholder": "https://example.com/image.png or /path/to/image.png"
                 }),
-                "image": (sorted(files),) if files else ([""],),
             }
         }
 
@@ -270,32 +272,34 @@ class LoadImageByUrlOrPath:
     CATEGORY = "image"
     OUTPUT_NODE = False
 
-    def load(self, source, url="", image=""):
+    def load(self, url_or_path):
         """
         Load image from URL or file and return with UI preview data
         """
         try:
-            if source == "url":
-                if not url or not url.strip():
-                    raise ValueError("URL is required when source is 'url'")
+            if not url_or_path or not url_or_path.strip():
+                raise ValueError("URL or path is required")
 
-                print(f"Loading image from URL: {url}")
-                img, name = load_image_from_url(url)
-            else:  # file
-                if not image:
-                    raise ValueError("No image file selected")
+            source = url_or_path.strip()
 
-                input_dir = folder_paths.get_input_directory()
-                file_path = os.path.join(input_dir, image)
-                print(f"Loading image from file: {file_path}")
-                img, name = load_image_from_path(file_path)
+            # Detect if it's a URL or local path
+            if is_url(source):
+                print(f"Loading image from URL: {source}")
+                img, name = load_image_from_url(source)
+            else:
+                print(f"Loading image from file: {source}")
+                # If it's not an absolute path, look in ComfyUI's input directory
+                if not os.path.isabs(source):
+                    input_dir = folder_paths.get_input_directory()
+                    source = os.path.join(input_dir, source)
+                img, name = load_image_from_path(source)
 
             # Convert to tensors
             img_out, mask_out = pil2tensor(img)
 
             # Save to temp directory for preview
-            url_hash = hashlib.md5((url or image).encode()).hexdigest()[:10]
-            temp_filename = f"preview_{url_hash}_{name}"
+            source_hash = hashlib.md5(url_or_path.encode()).hexdigest()[:10]
+            temp_filename = f"preview_{source_hash}_{name}"
 
             temp_dir = folder_paths.get_temp_directory()
             temp_path = os.path.join(temp_dir, temp_filename)
@@ -325,6 +329,59 @@ class LoadImageByUrlOrPath:
             raise RuntimeError(f"Potential decompression bomb detected: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Error loading image: {str(e)}")
+
+    @classmethod
+    def IS_CHANGED(cls, url_or_path):
+        """Force re-execution when URL or path changes"""
+        return url_or_path
+
+
+# API endpoint para cargar preview sin ejecutar workflow
+from aiohttp import web
+
+@server.PromptServer.instance.routes.post("/load_image_preview")
+async def load_image_preview(request):
+    """Endpoint para cargar preview de imagen sin ejecutar workflow"""
+    try:
+        data = await request.json()
+        url_or_path = data.get("url_or_path", "").strip()
+
+        if not url_or_path:
+            return web.json_response({"error": "URL or path is required"}, status=400)
+
+        # Detect if it's a URL or local path
+        if is_url(url_or_path):
+            img, name = load_image_from_url(url_or_path)
+        else:
+            if not os.path.isabs(url_or_path):
+                input_dir = folder_paths.get_input_directory()
+                url_or_path = os.path.join(input_dir, url_or_path)
+            img, name = load_image_from_path(url_or_path)
+
+        # Save to temp directory
+        source_hash = hashlib.md5(url_or_path.encode()).hexdigest()[:10]
+        temp_filename = f"preview_{source_hash}_{name}"
+
+        temp_dir = folder_paths.get_temp_directory()
+        temp_path = os.path.join(temp_dir, temp_filename)
+
+        img.save(temp_path, quality=95, optimize=True)
+
+        return web.json_response({
+            "success": True,
+            "image": {
+                "filename": temp_filename,
+                "subfolder": "",
+                "type": "temp"
+            },
+            "dimensions": {
+                "width": img.size[0],
+                "height": img.size[1]
+            }
+        })
+
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 # Node registration
