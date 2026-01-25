@@ -10,11 +10,19 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "LoadImageByUrlOrPath") {
 
+            // ========== CONSTANTES CONFIGURABLES ==========
+            const MIN_NODE_WIDTH = 280;      // Ancho mínimo del nodo
+            const MAX_NODE_WIDTH = 450;      // Ancho máximo del nodo
+            const PREVIEW_PADDING = 10;      // Padding alrededor de la imagen
+            const EXTRA_HEIGHT = 5;          // Padding adicional (widgets + texto + espacio)
+            const MAX_IMAGE_HEIGHT = 300;    // Altura máxima de la imagen
+            // =============================================
+
             // Store original onNodeCreated
-            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
 
             nodeType.prototype.onNodeCreated = function() {
-                const result = onNodeCreated?.apply(this, arguments);
+                const result = originalOnNodeCreated?.apply(this, arguments);
 
                 // Store image dimensions for size calculation
                 this._previewImgWidth = 0;
@@ -61,9 +69,8 @@ app.registerExtension({
 
                 // Calculate image dimensions maintaining aspect ratio
                 const imgAspect = img.naturalWidth / img.naturalHeight;
-                const padding = 10;
-                const maxWidth = availableWidth - padding * 2;
-                const maxHeight = availableHeight - padding * 2;
+                const maxWidth = availableWidth - PREVIEW_PADDING * 2;
+                const maxHeight = availableHeight - PREVIEW_PADDING * 2;
 
                 let drawWidth, drawHeight;
 
@@ -99,23 +106,41 @@ app.registerExtension({
                 }
 
                 // Calculate optimal width
-                const optimalWidth = Math.max(280, Math.min(this._previewImgWidth, 450));
+                const optimalWidth = Math.max(MIN_NODE_WIDTH, Math.min(this._previewImgWidth, MAX_NODE_WIDTH));
 
                 // Calculate the height needed for the image at this width
                 const aspectRatio = this._previewImgHeight / this._previewImgWidth;
-                const imageWidth = optimalWidth - 20; // padding
-                const imageHeight = Math.min(imageWidth * aspectRatio, 500);
+                const imageWidth = optimalWidth - (PREVIEW_PADDING * 2);
+                const imageHeight = Math.min(imageWidth * aspectRatio, MAX_IMAGE_HEIGHT);
 
                 // Get widgets height
                 const widgetsHeight = this.computeSize()[1];
 
-                // Total height = widgets + image + padding + text space
-                const totalHeight = widgetsHeight + imageHeight + 30;
+                // Total height = widgets + image + extra padding
+                const totalHeight = widgetsHeight + imageHeight + EXTRA_HEIGHT;
 
                 this.setSize([optimalWidth, totalHeight]);
 
                 this.setDirtyCanvas(true, true);
                 app.graph.setDirtyCanvas(true, true);
+            };
+
+            // Override setSize to prevent shrinking below image preview size
+            const originalSetSize = nodeType.prototype.setSize;
+            nodeType.prototype.setSize = function(size) {
+                if (this._previewVisible && this._previewImgWidth > 0) {
+                    // Recalculate minimum height dynamically using SAME constants
+                    const optimalWidth = Math.max(MIN_NODE_WIDTH, Math.min(this._previewImgWidth, MAX_NODE_WIDTH));
+                    const aspectRatio = this._previewImgHeight / this._previewImgWidth;
+                    const imageWidth = optimalWidth - (PREVIEW_PADDING * 2);
+                    const imageHeight = Math.min(imageWidth * aspectRatio, MAX_IMAGE_HEIGHT);
+                    const widgetsHeight = this.computeSize()[1];
+                    const minHeight = widgetsHeight + imageHeight + EXTRA_HEIGHT;
+
+                    // Enforce minimum height
+                    size[1] = Math.max(size[1], minHeight);
+                }
+                return originalSetSize.call(this, size);
             };
 
             // Add method to load preview
@@ -127,6 +152,13 @@ app.registerExtension({
                         alert("Please enter a URL or path");
                         return;
                     }
+
+                    // Clear previous preview state
+                    this._previewVisible = false;
+                    this._previewImgElement = null;
+                    this._previewImgWidth = 0;
+                    this._previewImgHeight = 0;
+                    this.setDirtyCanvas(true, true);
 
                     const urlOrPath = urlOrPathWidget.value.trim();
 
@@ -155,14 +187,14 @@ app.registerExtension({
                             this._previewImgHeight = data.dimensions.height;
                         }
 
-                        // Build image URL
+                        // Build image URL with cache buster
                         const params = new URLSearchParams({
                             filename: data.image.filename,
                             type: data.image.type,
                             subfolder: data.image.subfolder || ""
                         });
 
-                        const imageUrl = api.apiURL(`/view?${params.toString()}`);
+                        const imageUrl = api.apiURL(`/view?${params.toString()}&t=${Date.now()}`);
                         const node = this;
 
                         // Create image element for canvas drawing
