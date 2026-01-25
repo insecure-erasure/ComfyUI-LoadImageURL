@@ -13,6 +13,7 @@ app.registerExtension({
             // ========== CONSTANTES CONFIGURABLES ==========
             const MIN_NODE_WIDTH = 280;      // Ancho mínimo del nodo
             const MAX_NODE_WIDTH = 450;      // Ancho máximo del nodo
+            const MIN_NODE_HEIGHT = 200;     // Altura mínima ABSOLUTA del nodo (permite redimensionar más)
             const PREVIEW_PADDING = 10;      // Padding alrededor de la imagen
             const EXTRA_HEIGHT = 5;          // Padding adicional (widgets + texto + espacio)
             const MAX_IMAGE_HEIGHT = 300;    // Altura máxima de la imagen
@@ -125,20 +126,12 @@ app.registerExtension({
                 app.graph.setDirtyCanvas(true, true);
             };
 
-            // Override setSize to prevent shrinking below image preview size
+            // Override setSize to prevent shrinking below minimum
             const originalSetSize = nodeType.prototype.setSize;
             nodeType.prototype.setSize = function(size) {
                 if (this._previewVisible && this._previewImgWidth > 0) {
-                    // Recalculate minimum height dynamically using SAME constants
-                    const optimalWidth = Math.max(MIN_NODE_WIDTH, Math.min(this._previewImgWidth, MAX_NODE_WIDTH));
-                    const aspectRatio = this._previewImgHeight / this._previewImgWidth;
-                    const imageWidth = optimalWidth - (PREVIEW_PADDING * 2);
-                    const imageHeight = Math.min(imageWidth * aspectRatio, MAX_IMAGE_HEIGHT);
-                    const widgetsHeight = this.computeSize()[1];
-                    const minHeight = widgetsHeight + imageHeight + EXTRA_HEIGHT;
-
-                    // Enforce minimum height
-                    size[1] = Math.max(size[1], minHeight);
+                    // Enforce minimum height (absolute, not based on image)
+                    size[1] = Math.max(size[1], MIN_NODE_HEIGHT);
                 }
                 return originalSetSize.call(this, size);
             };
