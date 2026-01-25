@@ -10,14 +10,15 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "LoadImageByUrlOrPath") {
 
-            // ========== CONSTANTES CONFIGURABLES ==========
-            const MIN_NODE_WIDTH = 280;      // Ancho mínimo del nodo
-            const MAX_NODE_WIDTH = 450;      // Ancho máximo del nodo
-            const MIN_NODE_HEIGHT = 200;     // Altura mínima ABSOLUTA del nodo (permite redimensionar más)
-            const PREVIEW_PADDING = 10;      // Padding alrededor de la imagen
-            const EXTRA_HEIGHT = 5;          // Padding adicional (widgets + texto + espacio)
-            const MAX_IMAGE_HEIGHT = 300;    // Altura máxima de la imagen
-            // =============================================
+            // ========== CONFIGURABLE CONSTANTS ==========
+            const MIN_NODE_WIDTH = 280;      // Minimum node width
+            const MAX_NODE_WIDTH = 450;      // Maximum node width
+            const MIN_NODE_HEIGHT = 200;     // Absolute minimum node height
+            const PREVIEW_PADDING = 10;      // Padding around image
+            const TOP_PADDING = 1;           // Padding above image (between button and image)
+            const BOTTOM_PADDING = 18;       // Padding below image (for dimensions text)
+            const MAX_IMAGE_HEIGHT = 300;    // Maximum image height
+            // ==========================================
 
             // Store original onNodeCreated
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
@@ -60,8 +61,8 @@ app.registerExtension({
 
                 // Calculate available space (below widgets)
                 const widgetHeight = this.computeSize()[1];
-                const yStart = widgetHeight;
-                const availableHeight = this.size[1] - yStart;
+                const yStart = widgetHeight + TOP_PADDING;
+                const availableHeight = this.size[1] - yStart - BOTTOM_PADDING;
                 const availableWidth = this.size[0];
 
                 if (availableHeight <= 10) {
@@ -71,7 +72,7 @@ app.registerExtension({
                 // Calculate image dimensions maintaining aspect ratio
                 const imgAspect = img.naturalWidth / img.naturalHeight;
                 const maxWidth = availableWidth - PREVIEW_PADDING * 2;
-                const maxHeight = availableHeight - PREVIEW_PADDING * 2;
+                const maxHeight = availableHeight;
 
                 let drawWidth, drawHeight;
 
@@ -85,9 +86,9 @@ app.registerExtension({
                     drawHeight = drawWidth / imgAspect;
                 }
 
-                // Center the image
+                // Position image closer to top
                 const x = (availableWidth - drawWidth) / 2;
-                const y = yStart + (availableHeight - drawHeight) / 2;
+                const y = yStart;
 
                 // Draw image
                 ctx.drawImage(img, x, y, drawWidth, drawHeight);
@@ -97,7 +98,7 @@ app.registerExtension({
                 ctx.font = "10px Arial";
                 ctx.fillStyle = "#888";
                 ctx.textAlign = "center";
-                ctx.fillText(text, availableWidth / 2, y + drawHeight + 12);
+                ctx.fillText(text, availableWidth / 2, y + drawHeight + 14);
             };
 
             // Helper function to update node size based on image
@@ -117,8 +118,8 @@ app.registerExtension({
                 // Get widgets height
                 const widgetsHeight = this.computeSize()[1];
 
-                // Total height = widgets + image + extra padding
-                const totalHeight = widgetsHeight + imageHeight + EXTRA_HEIGHT;
+                // Total height = widgets + top padding + image + bottom padding
+                const totalHeight = widgetsHeight + TOP_PADDING + imageHeight + BOTTOM_PADDING;
 
                 this.setSize([optimalWidth, totalHeight]);
 
