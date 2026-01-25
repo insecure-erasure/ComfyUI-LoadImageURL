@@ -11,13 +11,13 @@ app.registerExtension({
         if (nodeData.name === "LoadImageByUrlOrPath") {
 
             // ========== CONFIGURABLE CONSTANTS ==========
-            const MIN_NODE_WIDTH = 280;      // Minimum node width
-            const MAX_NODE_WIDTH = 450;      // Maximum node width
+            const MIN_NODE_WIDTH = 148;      // Minimum node width
+            const MAX_NODE_WIDTH = 240;      // Maximum node width
             const MIN_NODE_HEIGHT = 200;     // Absolute minimum node height
             const PREVIEW_PADDING = 10;      // Padding around image
-            const TOP_PADDING = 1;           // Padding above image (between button and image)
+            const TOP_PADDING = -8;          // Padding above image (negative to compensate ComfyUI spacing)
             const BOTTOM_PADDING = 18;       // Padding below image (for dimensions text)
-            const MAX_IMAGE_HEIGHT = 300;    // Maximum image height
+            const MAX_IMAGE_HEIGHT = 192;    // Maximum image height
             // ==========================================
 
             // Store original onNodeCreated
