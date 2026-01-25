@@ -1,151 +1,337 @@
+from PIL import Image, ImageSequence, ImageOps
 import torch
-import numpy as np
-from PIL import Image, ImageOps, ImageSequence
 import requests
 from io import BytesIO
 import os
+import numpy as np
+import imghdr
 import folder_paths
 import hashlib
-import node_helpers
+
+try:
+    import imageio.v3 as iio
+    HAS_IMAGEIO = True
+except ImportError:
+    HAS_IMAGEIO = False
+
+# Configure PIL security limits
+Image.MAX_IMAGE_PIXELS = 178956970
 
 
-class LoadImageFileOrURL:
+def pil2tensor(img):
+    """Convert PIL image to tensor format used by ComfyUI"""
+    output_images = []
+    output_masks = []
+
+    for i in ImageSequence.Iterator(img):
+        i = ImageOps.exif_transpose(i)
+        if i.mode == 'I':
+            i = i.point(lambda i: i * (1 / 255))
+        image = i.convert("RGB")
+        image = np.array(image).astype(np.float32) / 255.0
+        image = torch.from_numpy(image)[None,]
+
+        if 'A' in i.getbands():
+            mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
+            mask = 1. - torch.from_numpy(mask)
+        else:
+            mask = torch.ones((image.shape[1], image.shape[2]), dtype=torch.float32, device="cpu")
+
+        output_images.append(image)
+        output_masks.append(mask.unsqueeze(0))
+
+    if len(output_images) > 1:
+        output_image = torch.cat(output_images, dim=0)
+        output_mask = torch.cat(output_masks, dim=0)
+    else:
+        output_image = output_images[0]
+        output_mask = output_masks[0]
+
+    return (output_image, output_mask)
+
+
+def normalize_image_type(type_str):
+    """Normalize image type names to standard format"""
+    type_str = type_str.lower().strip()
+    if type_str in ['jpg', 'jpeg']:
+        return 'jpeg'
+    return type_str
+
+
+def is_url(source):
+    """Check if source is a URL (with or without protocol)"""
+    source = source.strip()
+    if source.startswith(('http://', 'https://')):
+        return True
+    if '.' in source and not source.startswith(('/', './', '../', '~/')):
+        parts = source.split('/')
+        if parts and '.' in parts[0]:
+            return True
+    return False
+
+
+def normalize_url(url):
+    """Add https:// protocol if missing from URL"""
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        return 'https://' + url
+    return url
+
+
+def validate_image_dimensions(width, height, max_pixels=100000000):
+    """Validate image dimensions for safety"""
+    total_pixels = width * height
+
+    if total_pixels > max_pixels:
+        return False, f"Image too large: {width}x{height} ({total_pixels} pixels, max {max_pixels})"
+
+    aspect_ratio = max(width, height) / min(width, height) if min(width, height) > 0 else 0
+    if aspect_ratio > 100:
+        return False, f"Suspicious aspect ratio: {width}x{height}"
+
+    return True, None
+
+
+def load_image_safe(content_or_path, max_pixels=100000000):
+    """Load image using imageio (safer) or PIL as fallback"""
+    if HAS_IMAGEIO:
+        try:
+            img_array = iio.imread(content_or_path)
+
+            if len(img_array.shape) == 2:
+                height, width = img_array.shape
+                channels = 1
+            elif len(img_array.shape) == 3:
+                height, width, channels = img_array.shape
+            else:
+                raise ValueError(f"Unsupported shape: {img_array.shape}")
+
+            is_valid, error_msg = validate_image_dimensions(width, height, max_pixels)
+            if not is_valid:
+                raise ValueError(error_msg)
+
+            if channels == 1:
+                img = Image.fromarray(img_array, mode='L')
+            elif channels == 3:
+                img = Image.fromarray(img_array, mode='RGB')
+            elif channels == 4:
+                img = Image.fromarray(img_array, mode='RGBA')
+            else:
+                raise ValueError(f"Unsupported channels: {channels}")
+
+            return img
+        except Exception as e:
+            print(f"imageio failed, falling back to PIL: {str(e)[:80]}")
+
+    # Fallback to PIL
+    img = Image.open(content_or_path)
+    width, height = img.size
+    is_valid, error_msg = validate_image_dimensions(width, height, max_pixels)
+    if not is_valid:
+        raise ValueError(error_msg)
+    return img
+
+
+def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_pixels=100000000):
     """
-    A ComfyUI node that loads images from either a local file or a URL.
-    Use the source switcher to choose which input to use.
+    Load image from URL with comprehensive security validation
+
+    Args:
+        url: URL to download image from
+        timeout: Request timeout in seconds
+        max_size_mb: Maximum allowed file size in MB
+        max_redirects: Maximum number of redirects to follow
+        max_pixels: Maximum allowed total pixels
+
+    Returns:
+        tuple: (PIL Image object, temporary filename)
+    """
+    url = normalize_url(url)
+
+    session = requests.Session()
+    session.max_redirects = max_redirects
+
+    response = session.get(
+        url, 
+        timeout=timeout,
+        stream=True,
+        headers={'User-Agent': 'ComfyUI'},
+        allow_redirects=True
+    )
+    response.raise_for_status()
+
+    # Security check: HTTPS downgrade
+    if response.url.startswith('http://') and url.startswith('https://'):
+        print(f"Warning: Redirected from HTTPS to HTTP: {response.url}")
+
+    # Log redirects
+    if response.history:
+        print(f"Followed {len(response.history)} redirect(s)")
+        for i, r in enumerate(response.history, 1):
+            print(f"  Redirect {i}: {r.status_code} -> {r.url}")
+        print(f"  Final URL: {response.url}")
+
+    # Check file size
+    content_length = response.headers.get('Content-Length')
+    if content_length and int(content_length) > max_size_mb * 1024 * 1024:
+        raise ValueError(f"Image too large: {int(content_length)/(1024*1024):.1f}MB")
+
+    # Download content
+    content = response.content
+
+    # Verify file magic number
+    img_type = imghdr.what(None, h=content)
+    if img_type is None:
+        raise ValueError("File is not a valid image")
+
+    # Verify Content-Type matches actual file type
+    content_type = response.headers.get('Content-Type', '')
+    if content_type:
+        declared_type = content_type.split('/')[-1].split(';')[0]
+
+        if normalize_image_type(declared_type) != normalize_image_type(img_type):
+            raise ValueError(
+                f"Type mismatch: Content-Type indicates '{declared_type}' "
+                f"but file is '{img_type}'"
+            )
+
+    # Load image safely
+    img = load_image_safe(BytesIO(content), max_pixels)
+
+    # Generate filename from URL
+    file_name = response.url.split('/')[-1].split('?')[0]
+    if not file_name or '.' not in file_name:
+        file_name = f"downloaded_image.{img_type}"
+
+    session.close()
+    return img, file_name
+
+
+def load_image_from_path(file_path, max_pixels=100000000):
+    """
+    Load image from local path with validation
+
+    Args:
+        file_path: Local file path
+        max_pixels: Maximum allowed total pixels
+
+    Returns:
+        tuple: (PIL Image object, filename)
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Verify magic number
+    img_type = imghdr.what(file_path)
+    if img_type is None:
+        raise ValueError("File is not a valid image")
+
+    # Read file for validation
+    with open(file_path, 'rb') as f:
+        content = f.read()
+
+    # Load image safely
+    img = load_image_safe(BytesIO(content), max_pixels)
+
+    file_name = os.path.basename(file_path)
+    return img, file_name
+
+
+class LoadImageByUrlOrPath:
+    """
+    ComfyUI node to load images from URL or local file path with live preview
     """
 
     @classmethod
     def INPUT_TYPES(cls):
+        # Get list of available input images
         input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = [f for f in os.listdir(input_dir) 
+                if os.path.isfile(os.path.join(input_dir, f)) 
+                and f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'))]
 
         return {
             "required": {
-                "source": (["file", "url"], {"default": "file"}),
-                "image": (sorted(files), {}),
+                "source": (["url", "file"], {"default": "url"}),
+            },
+            "optional": {
                 "url": ("STRING", {
+                    "multiline": True,
                     "default": "",
-                    "multiline": False,
                     "placeholder": "https://example.com/image.png"
                 }),
-            },
+                "image": (sorted(files),) if files else ([""],),
+            }
         }
 
     RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("IMAGE", "MASK")
-    FUNCTION = "load_image"
+    RETURN_NAMES = ("image", "mask")
+    FUNCTION = "load"
     CATEGORY = "image"
+    OUTPUT_NODE = False
 
-    def load_image(self, source, image, url=""):
-        if source == "url":
-            if not url or not url.strip():
-                raise ValueError("URL is empty. Please enter an image URL.")
-            return self.load_from_url(url.strip())
-        else:
-            return self.load_from_file(image)
+    def load(self, source, url="", image=""):
+        """
+        Load image from URL or file and return with UI preview data
+        """
+        try:
+            if source == "url":
+                if not url or not url.strip():
+                    raise ValueError("URL is required when source is 'url'")
 
-    def load_from_file(self, image):
-        """Load image from local file - same as default LoadImage"""
-        image_path = folder_paths.get_annotated_filepath(image)
+                print(f"Loading image from URL: {url}")
+                img, name = load_image_from_url(url)
+            else:  # file
+                if not image:
+                    raise ValueError("No image file selected")
 
-        img = node_helpers.pillow(Image.open, image_path)
+                input_dir = folder_paths.get_input_directory()
+                file_path = os.path.join(input_dir, image)
+                print(f"Loading image from file: {file_path}")
+                img, name = load_image_from_path(file_path)
 
-        output_images = []
-        output_masks = []
-        w, h = None, None
+            # Convert to tensors
+            img_out, mask_out = pil2tensor(img)
 
-        excluded_formats = ['MPO']
+            # Save to temp directory for preview
+            url_hash = hashlib.md5((url or image).encode()).hexdigest()[:10]
+            temp_filename = f"preview_{url_hash}_{name}"
 
-        for i in ImageSequence.Iterator(img):
-            i = node_helpers.pillow(ImageOps.exif_transpose, i)
+            temp_dir = folder_paths.get_temp_directory()
+            temp_path = os.path.join(temp_dir, temp_filename)
 
-            if i.mode == 'I':
-                i = i.point(lambda i: i * (1 / 255))
-            image = i.convert("RGB")
+            # Save image for UI preview
+            img.save(temp_path, quality=95, optimize=True)
 
-            if len(output_images) == 0:
-                w = image.size[0]
-                h = image.size[1]
+            print(f"Image loaded successfully: {img.size[0]}x{img.size[1]}, mode: {img.mode}")
 
-            if image.size[0] != w or image.size[1] != h:
-                continue
+            # Return with UI preview metadata
+            return {
+                "ui": {
+                    "images": [{
+                        "filename": temp_filename,
+                        "subfolder": "",
+                        "type": "temp"
+                    }]
+                },
+                "result": (img_out, mask_out)
+            }
 
-            image = np.array(image).astype(np.float32) / 255.0
-            image = torch.from_numpy(image)[None,]
-            if 'A' in i.mode:
-                mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
-                mask = 1. - torch.from_numpy(mask)
-            else:
-                mask = torch.zeros((h, w), dtype=torch.float32, device="cpu")
-            output_images.append(image)
-            output_masks.append(mask.unsqueeze(0))
-
-        if len(output_images) > 1 and img.format not in excluded_formats:
-            output_image = torch.cat(output_images, dim=0)
-            output_mask = torch.cat(output_masks, dim=0)
-        else:
-            output_image = output_images[0]
-            output_mask = output_masks[0]
-
-        return (output_image, output_mask)
-
-    def load_from_url(self, url):
-        """Download and load image from URL"""
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-
-        img = Image.open(BytesIO(response.content))
-        img = ImageOps.exif_transpose(img)
-
-        if img.mode == 'I':
-            img = img.point(lambda i: i * (1 / 255))
-
-        if 'A' in img.mode:
-            mask = np.array(img.getchannel('A')).astype(np.float32) / 255.0
-            mask = 1. - torch.from_numpy(mask)
-        else:
-            mask = torch.zeros((img.height, img.width), dtype=torch.float32, device="cpu")
-
-        image = img.convert("RGB")
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image)[None,]
-
-        return (image, mask.unsqueeze(0))
-
-    @classmethod
-    def IS_CHANGED(cls, source, image, url=""):
-        if source == "url":
-            if url and url.strip():
-                return hashlib.sha256(url.encode()).hexdigest()
-            return ""
-        image_path = folder_paths.get_annotated_filepath(image)
-        m = hashlib.sha256()
-        with open(image_path, 'rb') as f:
-            m.update(f.read())
-        return m.hexdigest()
-
-    @classmethod
-    def VALIDATE_INPUTS(cls, source, image, url=""):
-        if source == "url":
-            if not url or not url.strip():
-                return "Please enter an image URL"
-            if not url.startswith(("http://", "https://")):
-                return "URL must start with http:// or https://"
-            return True
-        if not folder_paths.exists_annotated_filepath(image):
-            return "Invalid image file: {}".format(image)
-        return True
+        except requests.TooManyRedirects:
+            raise RuntimeError(f"Too many redirects (max: 5)")
+        except requests.RequestException as e:
+            raise RuntimeError(f"Error downloading image: {str(e)}")
+        except Image.DecompressionBombError as e:
+            raise RuntimeError(f"Potential decompression bomb detected: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Error loading image: {str(e)}")
 
 
+# Node registration
 NODE_CLASS_MAPPINGS = {
-    "LoadImageFileOrURL": LoadImageFileOrURL
+    "LoadImageByUrlOrPath": LoadImageByUrlOrPath
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "LoadImageFileOrURL": "Load Image (File/URL)"
+    "LoadImageByUrlOrPath": "Load Image (URL/Path)"
 }

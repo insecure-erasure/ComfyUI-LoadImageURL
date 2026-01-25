@@ -1,169 +1,127 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
+/**
+ * Extension to add live image preview to LoadImageByUrlOrPath node
+ * Based on comfyui-load-image-url by Braeden90000
+ */
 app.registerExtension({
-    name: "LoadImageFileOrURL.Preview",
+    name: "LoadImageByUrlOrPath.Preview",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name !== "LoadImageFileOrURL") return;
+        if (nodeData.name === "LoadImageByUrlOrPath") {
 
-        const onNodeCreated = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function() {
-            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+            // Store original onNodeCreated
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
 
-            const node = this;
-            const sourceWidget = this.widgets?.find(w => w.name === "source");
-            const imageWidget = this.widgets?.find(w => w.name === "image");
-            const urlWidget = this.widgets?.find(w => w.name === "url");
-            if (!sourceWidget || !urlWidget) return;
+            nodeType.prototype.onNodeCreated = function() {
+                const result = onNodeCreated?.apply(this, arguments);
 
-            // Clear any inherited/cached images
-            this.urlImg = null;
-            this.fileImg = null;
-            this.imgs = null;  // Clear native preview too
-            this.srcMode = sourceWidget.value || "file";
-            this._lastLoadedUrl = null;
-            this._lastLoadedFile = null;
+                // Create container for image preview
+                const previewContainer = document.createElement("div");
+                previewContainer.style.width = "100%";
+                previewContainer.style.marginTop = "10px";
+                previewContainer.style.display = "none";
 
-            const loadUrl = (url) => {
-                if (!url || !url.startsWith("http")) { node.urlImg = null; return; }
-                if (url === node._lastLoadedUrl && node.urlImg) return; // Already loaded
-                node._lastLoadedUrl = url;
-                const img = new Image();
-                img.onload = () => { node.urlImg = img; app.graph.setDirtyCanvas(true, false); };
-                img.onerror = () => { node.urlImg = null; };
-                img.src = url;
+                // Create image element
+                const previewImg = document.createElement("img");
+                previewImg.style.width = "100%";
+                previewImg.style.height = "auto";
+                previewImg.style.objectFit = "contain";
+                previewImg.style.borderRadius = "4px";
+                previewImg.style.border = "1px solid #444";
+
+                previewContainer.appendChild(previewImg);
+
+                // Add DOM widget for preview
+                const widget = this.addDOMWidget(
+                    "preview",
+                    "preview",
+                    previewContainer
+                );
+                widget.serialize = false; // Don't save to workflow
+
+                // Store references
+                this.previewWidget = widget;
+                this.previewImg = previewImg;
+                this.previewContainer = previewContainer;
+
+                return result;
             };
 
-            const loadFile = (filename) => {
-                if (!filename) { node.fileImg = null; return; }
-                if (filename === node._lastLoadedFile && node.fileImg) return; // Already loaded
-                node._lastLoadedFile = filename;
-                const img = new Image();
-                img.onload = () => { node.fileImg = img; app.graph.setDirtyCanvas(true, false); };
-                img.onerror = () => { node.fileImg = null; };
-                // Add cache-buster
-                img.src = `/view?filename=${encodeURIComponent(filename)}&type=input&t=${Date.now()}`;
-            };
+            // Store original onExecuted
+            const onExecuted = nodeType.prototype.onExecuted;
 
-            // Custom upload button
-            const uploadWidget = this.addWidget("button", "choose file to upload", null, () => {
-                const input = document.createElement("input");
-                input.type = "file";
-                input.accept = "image/*";
-                input.onchange = async () => {
-                    if (!input.files || !input.files[0]) return;
-                    const file = input.files[0];
+            nodeType.prototype.onExecuted = function(message) {
+                const result = onExecuted?.apply(this, arguments);
 
-                    const formData = new FormData();
-                    formData.append("image", file);
-                    formData.append("overwrite", "true");
+                // Update preview when node executes
+                if (message?.images && message.images.length > 0) {
+                    const imageData = message.images[0];
 
-                    try {
-                        const resp = await fetch("/upload/image", {
-                            method: "POST",
-                            body: formData
-                        });
-                        const data = await resp.json();
-                        if (data.name && imageWidget) {
-                            // Add to dropdown options if not exists
-                            if (!imageWidget.options.values.includes(data.name)) {
-                                imageWidget.options.values.push(data.name);
-                                imageWidget.options.values.sort();
+                    // Build image URL
+                    const params = new URLSearchParams({
+                        filename: imageData.filename,
+                        type: imageData.type,
+                        subfolder: imageData.subfolder || ""
+                    });
+
+                    const imageUrl = api.apiURL(`/view?${params.toString()}`);
+
+                    // Update preview image
+                    if (this.previewImg && this.previewContainer) {
+                        this.previewImg.src = imageUrl;
+                        this.previewContainer.style.display = "block";
+
+                        // Adjust node size when image loads
+                        this.previewImg.onload = () => {
+                            const minWidth = 320;
+                            const currentWidth = this.size[0];
+
+                            if (currentWidth < minWidth) {
+                                this.setSize([minWidth, this.computeSize()[1]]);
+                            } else {
+                                this.setSize([currentWidth, this.computeSize()[1]]);
                             }
-                            // Select the uploaded file
-                            imageWidget.value = data.name;
-                            if (imageWidget.callback) imageWidget.callback(data.name);
-                        }
-                    } catch (e) {
-                        console.error("Upload failed:", e);
+
+                            app.graph.setDirtyCanvas(true);
+                        };
+
+                        // Handle load errors
+                        this.previewImg.onerror = () => {
+                            console.error("Failed to load preview image");
+                            this.previewContainer.style.display = "none";
+                        };
                     }
-                };
-                input.click();
-            });
+                }
 
-            sourceWidget.callback = (v) => {
-                node.srcMode = v;
-                // Clear both previews when switching
-                node.urlImg = null;
-                node.fileImg = null;
-                if (v === "url") loadUrl(urlWidget.value);
-                if (v === "file" && imageWidget) loadFile(imageWidget.value);
-                app.graph.setDirtyCanvas(true, false);
+                return result;
             };
 
-            urlWidget.callback = (v) => {
-                if (node.srcMode === "url") loadUrl(v);
-            };
+            // Handle source switching to show/hide relevant inputs
+            const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+            nodeType.prototype.onConnectionsChange = function(type, index, connected, link_info) {
+                const result = onConnectionsChange?.apply(this, arguments);
 
-            if (imageWidget) {
-                const origCallback = imageWidget.callback;
-                imageWidget.callback = function(v) {
-                    if (origCallback) origCallback.apply(this, arguments);
-                    if (node.srcMode === "file") loadFile(v);
-                };
-            }
+                // Update widget visibility based on source selection
+                const sourceWidget = this.widgets?.find(w => w.name === "source");
+                const urlWidget = this.widgets?.find(w => w.name === "url");
+                const imageWidget = this.widgets?.find(w => w.name === "image");
 
-            // Only load preview for current mode on startup
-            if (this.srcMode === "url" && urlWidget.value) {
-                loadUrl(urlWidget.value);
-            } else if (this.srcMode === "file" && imageWidget && imageWidget.value) {
-                loadFile(imageWidget.value);
-            }
+                if (sourceWidget && urlWidget && imageWidget) {
+                    const source = sourceWidget.value;
 
-            // Handle workflow load - clear and reload correct preview
-            const onConfigure = this.onConfigure;
-            this.onConfigure = function() {
-                if (onConfigure) onConfigure.apply(this, arguments);
-                // Clear cached images
-                node.urlImg = null;
-                node.fileImg = null;
-                node.imgs = null;
-                node._lastLoadedUrl = null;
-                node._lastLoadedFile = null;
-                // Update mode from widget
-                node.srcMode = sourceWidget.value || "file";
-                // Load correct preview after short delay
-                setTimeout(() => {
-                    if (node.srcMode === "url" && urlWidget.value) {
-                        loadUrl(urlWidget.value);
-                    } else if (node.srcMode === "file" && imageWidget && imageWidget.value) {
-                        loadFile(imageWidget.value);
+                    if (source === "url") {
+                        urlWidget.type = "text";
+                        imageWidget.type = "converted-widget";
+                    } else {
+                        urlWidget.type = "converted-widget";
+                        imageWidget.type = "combo";
                     }
-                }, 100);
+                }
+
+                return result;
             };
-        };
-
-        const onDraw = nodeType.prototype.onDrawForeground;
-        nodeType.prototype.onDrawForeground = function(ctx) {
-            if (onDraw) onDraw.apply(this, arguments);
-
-            const img = this.srcMode === "url" ? this.urlImg : this.fileImg;
-            if (!img) return;
-
-            const y = 160;
-            const maxW = this.size[0] - 20;
-            const maxH = Math.max(this.size[1] - y - 25, 50);
-
-            let w = img.width;
-            let h = img.height;
-
-            // Scale to fit width first
-            if (w > maxW) {
-                h = h * (maxW / w);
-                w = maxW;
-            }
-            // Then scale to fit height if needed
-            if (h > maxH) {
-                w = w * (maxH / h);
-                h = maxH;
-            }
-
-            const x = (this.size[0] - w) / 2;
-            ctx.drawImage(img, x, y, w, h);
-            ctx.fillStyle = "#aaa";
-            ctx.font = "11px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText(img.width + " x " + img.height, this.size[0]/2, y + h + 15);
-        };
+        }
     }
 });
