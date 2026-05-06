@@ -70,17 +70,6 @@ def normalize_image_type(type_str):
     return type_str
 
 
-def is_url(source):
-    """Check if source is a URL (with or without protocol)"""
-    source = source.strip()
-    if source.startswith(('http://', 'https://')):
-        return True
-    if '.' in source and not source.startswith(('/', './', '../', '~/')):
-        parts = source.split('/')
-        if parts and '.' in parts[0]:
-            return True
-    return False
-
 
 def normalize_url(url):
     """Add https:// protocol if missing from URL"""
@@ -219,19 +208,49 @@ def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_p
     return img, file_name
 
 
-def load_image_from_path(file_path, max_pixels=100000000):
+def list_temp_images():
+    """List image files in ComfyUI's temp directory"""
+    temp_dir = folder_paths.get_temp_directory()
+    if not os.path.isdir(temp_dir):
+        return []
+
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
+    files = []
+    for f in os.listdir(temp_dir):
+        if os.path.isfile(os.path.join(temp_dir, f)):
+            _, ext = os.path.splitext(f)
+            if ext.lower() in valid_extensions:
+                files.append(f)
+    return sorted(files)
+
+
+def load_image_from_temp(filename, max_pixels=100000000):
     """
-    Load image from local path with validation
+    Load image from ComfyUI's temp directory with validation.
+
+    Only accepts plain filenames (no path separators). Resolves against
+    the temp directory and verifies the result does not escape it.
 
     Args:
-        file_path: Local file path
+        filename: Image filename (basename only, no path components)
         max_pixels: Maximum allowed total pixels
 
     Returns:
         tuple: (PIL Image object, filename)
     """
+    # Reject any path separators to prevent traversal
+    if os.sep in filename or '/' in filename or '\\' in filename:
+        raise ValueError(f"Invalid filename (path separators not allowed): {filename}")
+
+    temp_dir = folder_paths.get_temp_directory()
+    file_path = os.path.normpath(os.path.join(temp_dir, filename))
+
+    # Verify resolved path is still inside temp directory
+    if not file_path.startswith(os.path.normpath(temp_dir) + os.sep) and file_path != os.path.normpath(temp_dir):
+        raise ValueError(f"Path traversal detected: {filename}")
+
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File not found: {file_path}")
+        raise FileNotFoundError(f"File not found in temp directory: {filename}")
 
     # Read file for validation
     with open(file_path, 'rb') as f:
@@ -245,24 +264,26 @@ def load_image_from_path(file_path, max_pixels=100000000):
     # Load image safely
     img = load_image_safe(BytesIO(content), max_pixels)
 
-    file_name = os.path.basename(file_path)
-    return img, file_name
+    return img, filename
 
 
 class LoadImageByUrlOrPath:
     """
-    ComfyUI node to load images from URL or local file path with live preview
+    ComfyUI node to load images from URL or ComfyUI temp directory with live preview
     """
 
     @classmethod
     def INPUT_TYPES(cls):
+        temp_files = list_temp_images()
         return {
             "required": {
-                "url_or_path": ("STRING", {
+                "source": (["url", "temp_file"],),
+                "url": ("STRING", {
                     "multiline": False,
                     "default": "",
-                    "placeholder": "https://example.com/image.png or /path/to/image.png"
+                    "placeholder": "https://example.com/image.png"
                 }),
+                "image": (temp_files if temp_files else ["(no images found)"],),
             }
         }
 
@@ -272,40 +293,38 @@ class LoadImageByUrlOrPath:
     CATEGORY = "image"
     OUTPUT_NODE = False
 
-    def load(self, url_or_path):
+    def load(self, source, url, image):
         """
-        Load image from URL or file and return with UI preview data
+        Load image from URL or temp file and return with UI preview data
         """
         try:
-            if not url_or_path or not url_or_path.strip():
-                raise ValueError("URL or path is required")
-
-            source = url_or_path.strip()
-
-            # Detect if it's a URL or local path
-            if is_url(source):
-                print(f"Loading image from URL: {source}")
-                img, name = load_image_from_url(source)
+            if source == "url":
+                if not url or not url.strip():
+                    raise ValueError("URL is required")
+                print(f"Loading image from URL: {url.strip()}")
+                img, name = load_image_from_url(url.strip())
+                source_key = url.strip()
             else:
-                print(f"Loading image from file: {source}")
-                # If it's not an absolute path, look in ComfyUI's input directory
-                if not os.path.isabs(source):
-                    input_dir = folder_paths.get_input_directory()
-                    source = os.path.join(input_dir, source)
-                img, name = load_image_from_path(source)
+                if not image or image == "(no images found)":
+                    raise ValueError("No temp image selected")
+                print(f"Loading image from temp: {image}")
+                img, name = load_image_from_temp(image)
+                source_key = image
 
             # Convert to tensors
             img_out, mask_out = pil2tensor(img)
 
             # Save to temp directory for preview
-            source_hash = hashlib.md5(url_or_path.encode()).hexdigest()[:10]
+            source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
             temp_filename = f"preview_{source_hash}_{name}"
 
             temp_dir = folder_paths.get_temp_directory()
             temp_path = os.path.join(temp_dir, temp_filename)
 
-            # Save image for UI preview
-            img.save(temp_path, quality=95, optimize=True)
+            # Save image for UI preview (as PNG to avoid format-specific kwarg issues)
+            preview_img = img.convert("RGB") if img.mode not in ("RGB", "RGBA") else img
+            preview_img.save(temp_path + ".png", format="PNG")
+            temp_filename = temp_filename + ".png"
 
             print(f"Image loaded successfully: {img.size[0]}x{img.size[1]}, mode: {img.mode}")
 
@@ -322,7 +341,7 @@ class LoadImageByUrlOrPath:
             }
 
         except requests.TooManyRedirects:
-            raise RuntimeError(f"Too many redirects (max: 5)")
+            raise RuntimeError("Too many redirects (max: 5)")
         except requests.RequestException as e:
             raise RuntimeError(f"Error downloading image: {str(e)}")
         except Image.DecompressionBombError as e:
@@ -331,41 +350,48 @@ class LoadImageByUrlOrPath:
             raise RuntimeError(f"Error loading image: {str(e)}")
 
     @classmethod
-    def IS_CHANGED(cls, url_or_path):
-        """Force re-execution when URL or path changes"""
-        return url_or_path
+    def IS_CHANGED(cls, source, url, image):
+        """Force re-execution when source or selection changes"""
+        if source == "url":
+            return url
+        return image
 
 
-# API endpoint para cargar preview sin ejecutar workflow
+# API endpoint to load preview without executing workflow
 from aiohttp import web
 
 @server.PromptServer.instance.routes.post("/load_image_preview")
 async def load_image_preview(request):
-    """Endpoint para cargar preview de imagen sin ejecutar workflow"""
+    """Endpoint to load image preview without executing workflow"""
     try:
         data = await request.json()
-        url_or_path = data.get("url_or_path", "").strip()
+        source = data.get("source", "").strip()
+        url = data.get("url", "").strip()
+        image = data.get("image", "").strip()
 
-        if not url_or_path:
-            return web.json_response({"error": "URL or path is required"}, status=400)
-
-        # Detect if it's a URL or local path
-        if is_url(url_or_path):
-            img, name = load_image_from_url(url_or_path)
+        if source == "url":
+            if not url:
+                return web.json_response({"error": "URL is required"}, status=400)
+            img, name = load_image_from_url(url)
+            source_key = url
+        elif source == "temp_file":
+            if not image or image == "(no images found)":
+                return web.json_response({"error": "No temp image selected"}, status=400)
+            img, name = load_image_from_temp(image)
+            source_key = image
         else:
-            if not os.path.isabs(url_or_path):
-                input_dir = folder_paths.get_input_directory()
-                url_or_path = os.path.join(input_dir, url_or_path)
-            img, name = load_image_from_path(url_or_path)
+            return web.json_response({"error": "Invalid source type"}, status=400)
 
-        # Save to temp directory
-        source_hash = hashlib.md5(url_or_path.encode()).hexdigest()[:10]
+        # Save to temp directory for preview
+        source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
         temp_filename = f"preview_{source_hash}_{name}"
 
         temp_dir = folder_paths.get_temp_directory()
         temp_path = os.path.join(temp_dir, temp_filename)
 
-        img.save(temp_path, quality=95, optimize=True)
+        preview_img = img.convert("RGB") if img.mode not in ("RGB", "RGBA") else img
+        preview_img.save(temp_path + ".png", format="PNG")
+        temp_filename = temp_filename + ".png"
 
         return web.json_response({
             "success": True,

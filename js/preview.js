@@ -20,6 +20,38 @@ app.registerExtension({
             const MAX_IMAGE_HEIGHT = 192;    // Maximum image height
             // ==========================================
 
+            /**
+             * Toggle visibility of url/image widgets based on source value.
+             * Hidden widgets are excluded from layout by switching their
+             * type to "hidden", a convention used across ComfyUI extensions.
+             */
+            function updateWidgetVisibility(node) {
+                const sourceWidget = node.widgets?.find(w => w.name === "source");
+                const urlWidget = node.widgets?.find(w => w.name === "url");
+                const imageWidget = node.widgets?.find(w => w.name === "image");
+
+                if (!sourceWidget || !urlWidget || !imageWidget) return;
+
+                const isUrl = sourceWidget.value === "url";
+
+                // Store original types on first call so we can restore them
+                if (urlWidget._originalType === undefined) {
+                    urlWidget._originalType = urlWidget.type;
+                }
+                if (imageWidget._originalType === undefined) {
+                    imageWidget._originalType = imageWidget.type;
+                }
+
+                urlWidget.type = isUrl ? urlWidget._originalType : "hidden";
+                imageWidget.type = isUrl ? "hidden" : imageWidget._originalType;
+
+                // Recalculate node size to account for hidden/shown widgets
+                const targetSize = node.computeSize();
+                targetSize[0] = Math.max(targetSize[0], node.size[0]);
+                node.setSize(targetSize);
+                node.setDirtyCanvas(true, true);
+            }
+
             // Store original onNodeCreated
             const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
 
@@ -32,12 +64,27 @@ app.registerExtension({
                 this._previewVisible = false;
                 this._previewImgSrc = null;
 
-                // Add Load button widget FIRST (before preview)
+                // Listen for source changes
+                const sourceWidget = this.widgets?.find(w => w.name === "source");
+                if (sourceWidget) {
+                    const originalCallback = sourceWidget.callback;
+                    const node = this;
+                    sourceWidget.callback = function(value) {
+                        if (originalCallback) originalCallback.call(this, value);
+                        updateWidgetVisibility(node);
+                    };
+                }
+
+                // Add Load button widget (after the other widgets)
                 const loadButton = this.addWidget("button", "Load Preview", null, () => {
                     this.loadPreview();
                 });
                 loadButton.serialize = false;
                 this.loadButton = loadButton;
+
+                // Set initial visibility (defer to next frame so widgets are ready)
+                const node = this;
+                requestAnimationFrame(() => updateWidgetVisibility(node));
 
                 return result;
             };
@@ -77,20 +124,16 @@ app.registerExtension({
                 let drawWidth, drawHeight;
 
                 if (maxWidth / maxHeight > imgAspect) {
-                    // Height constrained
                     drawHeight = maxHeight;
                     drawWidth = drawHeight * imgAspect;
                 } else {
-                    // Width constrained
                     drawWidth = maxWidth;
                     drawHeight = drawWidth / imgAspect;
                 }
 
-                // Position image closer to top
                 const x = (availableWidth - drawWidth) / 2;
                 const y = yStart;
 
-                // Draw image
                 ctx.drawImage(img, x, y, drawWidth, drawHeight);
 
                 // Draw dimensions text below image
@@ -107,18 +150,11 @@ app.registerExtension({
                     return;
                 }
 
-                // Calculate optimal width
                 const optimalWidth = Math.max(MIN_NODE_WIDTH, Math.min(this._previewImgWidth, MAX_NODE_WIDTH));
-
-                // Calculate the height needed for the image at this width
                 const aspectRatio = this._previewImgHeight / this._previewImgWidth;
                 const imageWidth = optimalWidth - (PREVIEW_PADDING * 2);
                 const imageHeight = Math.min(imageWidth * aspectRatio, MAX_IMAGE_HEIGHT);
-
-                // Get widgets height
                 const widgetsHeight = this.computeSize()[1];
-
-                // Total height = widgets + top padding + image + bottom padding
                 const totalHeight = widgetsHeight + TOP_PADDING + imageHeight + BOTTOM_PADDING;
 
                 this.setSize([optimalWidth, totalHeight]);
@@ -131,7 +167,6 @@ app.registerExtension({
             const originalSetSize = nodeType.prototype.setSize;
             nodeType.prototype.setSize = function(size) {
                 if (this._previewVisible && this._previewImgWidth > 0) {
-                    // Enforce minimum height (absolute, not based on image)
                     size[1] = Math.max(size[1], MIN_NODE_HEIGHT);
                 }
                 return originalSetSize.call(this, size);
@@ -140,11 +175,27 @@ app.registerExtension({
             // Add method to load preview
             nodeType.prototype.loadPreview = async function() {
                 try {
-                    const urlOrPathWidget = this.widgets?.find(w => w.name === "url_or_path");
+                    const sourceWidget = this.widgets?.find(w => w.name === "source");
+                    const urlWidget = this.widgets?.find(w => w.name === "url");
+                    const imageWidget = this.widgets?.find(w => w.name === "image");
 
-                    if (!urlOrPathWidget || !urlOrPathWidget.value?.trim()) {
-                        alert("Please enter a URL or path");
-                        return;
+                    if (!sourceWidget) return;
+
+                    const source = sourceWidget.value;
+                    let payload = { source };
+
+                    if (source === "url") {
+                        if (!urlWidget || !urlWidget.value?.trim()) {
+                            alert("Please enter a URL");
+                            return;
+                        }
+                        payload.url = urlWidget.value.trim();
+                    } else {
+                        if (!imageWidget || !imageWidget.value || imageWidget.value === "(no images found)") {
+                            alert("No temp image selected");
+                            return;
+                        }
+                        payload.image = imageWidget.value;
                     }
 
                     // Clear previous preview state
@@ -154,17 +205,13 @@ app.registerExtension({
                     this._previewImgHeight = 0;
                     this.setDirtyCanvas(true, true);
 
-                    const urlOrPath = urlOrPathWidget.value.trim();
-
                     // Call API endpoint
                     const response = await fetch("/load_image_preview", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
                         },
-                        body: JSON.stringify({
-                            url_or_path: urlOrPath
-                        })
+                        body: JSON.stringify(payload)
                     });
 
                     const data = await response.json();
@@ -175,13 +222,11 @@ app.registerExtension({
                     }
 
                     if (data.success && data.image) {
-                        // Store dimensions for computeSize
                         if (data.dimensions) {
                             this._previewImgWidth = data.dimensions.width;
                             this._previewImgHeight = data.dimensions.height;
                         }
 
-                        // Build image URL with cache buster
                         const params = new URLSearchParams({
                             filename: data.image.filename,
                             type: data.image.type,
@@ -191,7 +236,6 @@ app.registerExtension({
                         const imageUrl = api.apiURL(`/view?${params.toString()}&t=${Date.now()}`);
                         const node = this;
 
-                        // Create image element for canvas drawing
                         const img = new Image();
                         img.onload = () => {
                             if (!data.dimensions) {
@@ -226,11 +270,9 @@ app.registerExtension({
             nodeType.prototype.onExecuted = function(message) {
                 const result = onExecuted?.apply(this, arguments);
 
-                // Update preview when node executes
                 if (message?.images && message.images.length > 0) {
                     const imageData = message.images[0];
 
-                    // Build image URL
                     const params = new URLSearchParams({
                         filename: imageData.filename,
                         type: imageData.type,
@@ -240,7 +282,6 @@ app.registerExtension({
                     const imageUrl = api.apiURL(`/view?${params.toString()}`);
                     const node = this;
 
-                    // Create image element for canvas drawing
                     const img = new Image();
                     img.onload = () => {
                         node._previewImgWidth = img.naturalWidth;
