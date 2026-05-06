@@ -50,18 +50,22 @@ app.registerExtension({
              * ComfyUI/LiteGraph versions.
              */
             function setWidgetHidden(widget, hidden) {
-                widget.hidden = hidden;
                 if (hidden) {
-                    // Store originals on first hide
-                    if (widget._origComputeSize === undefined) {
-                        widget._origComputeSize = widget.computeSize;
-                        widget._origDraw = widget.draw;
+                    if (!widget._isHidden) {
+                        widget._origComputeSize = widget.computeSize?.bind(widget);
+                        widget._origDraw = widget.draw?.bind(widget);
+                        widget._isHidden = true;
                     }
-                    widget.computeSize = () => [0, -4]; // -4 compensates LiteGraph widget spacing
+                    widget.computeSize = () => [0, -4];
                     widget.draw = () => {};
-                } else if (widget._origComputeSize !== undefined) {
-                    widget.computeSize = widget._origComputeSize;
-                    widget.draw = widget._origDraw;
+                } else {
+                    if (widget._isHidden) {
+                        if (widget._origComputeSize) widget.computeSize = widget._origComputeSize;
+                        else delete widget.computeSize;
+                        if (widget._origDraw) widget.draw = widget._origDraw;
+                        else delete widget.draw;
+                        widget._isHidden = false;
+                    }
                 }
             }
 
