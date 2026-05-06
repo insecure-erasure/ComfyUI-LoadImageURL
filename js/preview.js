@@ -11,43 +11,17 @@ app.registerExtension({
         if (nodeData.name === "LoadImageByUrlOrPath") {
 
             // ========== CONFIGURABLE CONSTANTS ==========
-            const MIN_NODE_WIDTH = 148;      // Minimum node width
-            const MAX_NODE_WIDTH = 240;      // Maximum node width
-            const MIN_NODE_HEIGHT = 200;     // Absolute minimum node height
-            const PREVIEW_PADDING = 10;      // Padding around image
-            const TOP_PADDING = -8;          // Padding above image (negative to compensate ComfyUI spacing)
-            const BOTTOM_PADDING = 18;       // Padding below image (for dimensions text)
-            const MAX_IMAGE_HEIGHT = 192;    // Maximum image height
+            const MIN_NODE_WIDTH = 148;
+            const MAX_NODE_WIDTH = 240;
+            const MIN_NODE_HEIGHT = 200;
+            const PREVIEW_PADDING = 10;
+            const TOP_PADDING = -8;
+            const BOTTOM_PADDING = 18;
+            const MAX_IMAGE_HEIGHT = 192;
             // ==========================================
 
-            async function refreshTempFileList(node) {
-                const imageWidget = node.widgets?.find(w => w.name === "image");
-                if (!imageWidget) return;
-
-                try {
-                    const response = await fetch("/load_image_list_temp");
-                    const data = await response.json();
-
-                    if (data.files && data.files.length > 0) {
-                        imageWidget.options.values = data.files;
-                        // Keep current selection if still valid, otherwise select first
-                        if (!data.files.includes(imageWidget.value)) {
-                            imageWidget.value = data.files[0];
-                        }
-                    } else {
-                        imageWidget.options.values = ["(no images found)"];
-                        imageWidget.value = "(no images found)";
-                    }
-                    node.setDirtyCanvas(true, true);
-                } catch (error) {
-                    console.error("Error refreshing temp file list:", error);
-                }
-            }
-
             /**
-             * Toggle visibility of url/image widgets based on source value.
-             * Uses widget property overrides that work reliably across
-             * ComfyUI/LiteGraph versions.
+             * Hide or show a widget by overriding its computeSize and draw.
              */
             function setWidgetHidden(widget, hidden) {
                 if (hidden) {
@@ -69,6 +43,56 @@ app.registerExtension({
                 }
             }
 
+            /**
+             * Fetch the file list for the given folder from the server
+             * and update the image combo widget.
+             */
+            async function refreshFileList(node) {
+                const sourceWidget = node.widgets?.find(w => w.name === "source");
+                const imageWidget = node.widgets?.find(w => w.name === "image");
+                if (!sourceWidget || !imageWidget) return;
+
+                const folder = sourceWidget.value;
+                if (folder === "url") return;
+
+                try {
+                    const response = await fetch(`/load_image_list_folder?folder=${folder}`);
+                    const data = await response.json();
+
+                    if (data.files && data.files.length > 0) {
+                        imageWidget.options.values = data.files;
+                        if (!data.files.includes(imageWidget.value)) {
+                            imageWidget.value = data.files[0];
+                        }
+                    } else {
+                        imageWidget.options.values = ["(no images found)"];
+                        imageWidget.value = "(no images found)";
+                    }
+                    node.setDirtyCanvas(true, true);
+                } catch (error) {
+                    console.error("Error refreshing file list:", error);
+                }
+            }
+
+            /**
+             * Destroy the current preview image element and clear all
+             * preview state so the canvas is repainted clean.
+             */
+            function clearPreview(node) {
+                if (node._previewImgElement) {
+                    node._previewImgElement.src = "";
+                    node._previewImgElement = null;
+                }
+                node._previewVisible = false;
+                node._previewImgWidth = 0;
+                node._previewImgHeight = 0;
+                node.setDirtyCanvas(true, true);
+                app.graph.setDirtyCanvas(true, true);
+            }
+
+            /**
+             * Toggle visibility of url/image widgets based on source value.
+             */
             function updateWidgetVisibility(node) {
                 const sourceWidget = node.widgets?.find(w => w.name === "source");
                 const urlWidget = node.widgets?.find(w => w.name === "url");
@@ -87,9 +111,9 @@ app.registerExtension({
                 node.setSize(targetSize);
                 node.setDirtyCanvas(true, true);
 
-                // When switching to temp_file, refresh list and auto-preview
+                // When switching to a folder source, refresh list and auto-preview
                 if (!isUrl) {
-                    refreshTempFileList(node).then(() => {
+                    refreshFileList(node).then(() => {
                         if (imageWidget.value && imageWidget.value !== "(no images found)") {
                             node.loadPreview();
                         }
@@ -103,7 +127,7 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function() {
                 const result = originalOnNodeCreated?.apply(this, arguments);
 
-                // Store image dimensions for size calculation
+                // Preview state
                 this._previewImgWidth = 0;
                 this._previewImgHeight = 0;
                 this._previewVisible = false;
@@ -120,7 +144,7 @@ app.registerExtension({
                     };
                 }
 
-                // Auto-preview when temp file selection changes
+                // Auto-preview when file selection changes
                 const imageWidget = this.widgets?.find(w => w.name === "image");
                 if (imageWidget) {
                     const originalImgCallback = imageWidget.callback;
@@ -133,14 +157,14 @@ app.registerExtension({
                     };
                 }
 
-                // Add Load button widget (after the other widgets)
+                // Add Load button widget
                 const loadButton = this.addWidget("button", "Load Preview", null, () => {
                     this.loadPreview();
                 });
                 loadButton.serialize = false;
                 this.loadButton = loadButton;
 
-                // Set initial visibility (defer to next frame so widgets are fully ready)
+                // Set initial visibility
                 const node = this;
                 requestAnimationFrame(() => {
                     updateWidgetVisibility(node);
@@ -167,7 +191,6 @@ app.registerExtension({
                     return;
                 }
 
-                // Calculate available space (below widgets)
                 const widgetHeight = this.computeSize()[1];
                 const yStart = widgetHeight + TOP_PADDING;
                 const availableHeight = this.size[1] - yStart - BOTTOM_PADDING;
@@ -177,7 +200,6 @@ app.registerExtension({
                     return;
                 }
 
-                // Calculate image dimensions maintaining aspect ratio
                 const imgAspect = img.naturalWidth / img.naturalHeight;
                 const maxWidth = availableWidth - PREVIEW_PADDING * 2;
                 const maxHeight = availableHeight;
@@ -197,7 +219,6 @@ app.registerExtension({
 
                 ctx.drawImage(img, x, y, drawWidth, drawHeight);
 
-                // Draw dimensions text below image
                 const text = `${img.naturalWidth} × ${img.naturalHeight}`;
                 ctx.font = "10px Arial";
                 ctx.fillStyle = "#888";
@@ -233,7 +254,7 @@ app.registerExtension({
                 return originalSetSize.call(this, size);
             };
 
-            // Add method to load preview
+            // Load preview from server
             nodeType.prototype.loadPreview = async function() {
                 try {
                     const sourceWidget = this.widgets?.find(w => w.name === "source");
@@ -253,20 +274,15 @@ app.registerExtension({
                         payload.url = urlWidget.value.trim();
                     } else {
                         if (!imageWidget || !imageWidget.value || imageWidget.value === "(no images found)") {
-                            alert("No temp image selected");
+                            alert("No image selected");
                             return;
                         }
                         payload.image = imageWidget.value;
                     }
 
-                    // Clear previous preview state
-                    this._previewVisible = false;
-                    this._previewImgElement = null;
-                    this._previewImgWidth = 0;
-                    this._previewImgHeight = 0;
-                    this.setDirtyCanvas(true, true);
+                    // Clear previous preview completely
+                    clearPreview(this);
 
-                    // Call API endpoint
                     const response = await fetch("/load_image_preview", {
                         method: "POST",
                         headers: {
@@ -310,10 +326,7 @@ app.registerExtension({
 
                         img.onerror = () => {
                             console.error("Failed to load preview image");
-                            node._previewVisible = false;
-                            node._previewImgWidth = 0;
-                            node._previewImgHeight = 0;
-                            node.setDirtyCanvas(true, true);
+                            clearPreview(node);
                         };
 
                         img.src = imageUrl;
@@ -325,11 +338,14 @@ app.registerExtension({
                 }
             };
 
-            // Store original onExecuted
+            // Update preview after node execution
             const onExecuted = nodeType.prototype.onExecuted;
 
             nodeType.prototype.onExecuted = function(message) {
                 const result = onExecuted?.apply(this, arguments);
+
+                // Clear previous preview before loading new one
+                clearPreview(this);
 
                 if (message?.images && message.images.length > 0) {
                     const imageData = message.images[0];
@@ -354,7 +370,7 @@ app.registerExtension({
 
                     img.onerror = () => {
                         console.error("Failed to load preview image");
-                        node._previewVisible = false;
+                        clearPreview(node);
                     };
 
                     img.src = imageUrl;

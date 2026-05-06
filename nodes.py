@@ -70,7 +70,6 @@ def normalize_image_type(type_str):
     return type_str
 
 
-
 def normalize_url(url):
     """Add https:// protocol if missing from URL"""
     url = url.strip()
@@ -208,60 +207,65 @@ def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_p
     return img, file_name
 
 
-def list_temp_images():
-    """List image files in ComfyUI's temp directory"""
-    temp_dir = folder_paths.get_temp_directory()
-    if not os.path.isdir(temp_dir):
+def list_directory_images(directory):
+    """List image files in the given directory"""
+    if not os.path.isdir(directory):
         return []
 
     valid_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
     files = []
-    for f in os.listdir(temp_dir):
-        if os.path.isfile(os.path.join(temp_dir, f)):
+    for f in os.listdir(directory):
+        if os.path.isfile(os.path.join(directory, f)):
             _, ext = os.path.splitext(f)
-            if ext.lower() in valid_extensions:
+            if ext.lower() in valid_extensions and not f.startswith('preview_'):
                 files.append(f)
     return sorted(files)
 
 
-def load_image_from_temp(filename, max_pixels=100000000):
+ALLOWED_FOLDERS = {
+    "temp": folder_paths.get_temp_directory,
+    "input": folder_paths.get_input_directory,
+    "output": folder_paths.get_output_directory,
+}
+
+
+def load_image_from_folder(filename, folder_key, max_pixels=100000000):
     """
-    Load image from ComfyUI's temp directory with validation.
+    Load image from one of ComfyUI's managed directories.
 
     Only accepts plain filenames (no path separators). Resolves against
-    the temp directory and verifies the result does not escape it.
+    the target directory and verifies the result does not escape it.
 
     Args:
         filename: Image filename (basename only, no path components)
+        folder_key: One of 'temp', 'input', 'output'
         max_pixels: Maximum allowed total pixels
 
     Returns:
         tuple: (PIL Image object, filename)
     """
-    # Reject any path separators to prevent traversal
+    if folder_key not in ALLOWED_FOLDERS:
+        raise ValueError(f"Unknown folder: {folder_key}")
+
     if os.sep in filename or '/' in filename or '\\' in filename:
         raise ValueError(f"Invalid filename (path separators not allowed): {filename}")
 
-    temp_dir = folder_paths.get_temp_directory()
-    file_path = os.path.normpath(os.path.join(temp_dir, filename))
+    base_dir = ALLOWED_FOLDERS[folder_key]()
+    file_path = os.path.normpath(os.path.join(base_dir, filename))
 
-    # Verify resolved path is still inside temp directory
-    if not file_path.startswith(os.path.normpath(temp_dir) + os.sep) and file_path != os.path.normpath(temp_dir):
+    if not file_path.startswith(os.path.normpath(base_dir) + os.sep) and file_path != os.path.normpath(base_dir):
         raise ValueError(f"Path traversal detected: {filename}")
 
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File not found in temp directory: {filename}")
+        raise FileNotFoundError(f"File not found in {folder_key} directory: {filename}")
 
-    # Read file for validation
     with open(file_path, 'rb') as f:
         content = f.read()
 
-    # Verify file is a valid image using PIL
     img_type = detect_image_type(content)
     if img_type is None:
         raise ValueError("File is not a valid image")
 
-    # Load image safely
     img = load_image_safe(BytesIO(content), max_pixels)
 
     return img, filename
@@ -269,15 +273,15 @@ def load_image_from_temp(filename, max_pixels=100000000):
 
 class LoadImageByUrlOrPath:
     """
-    ComfyUI node to load images from URL or ComfyUI temp directory with live preview
+    ComfyUI node to load images from URL or ComfyUI directories with live preview
     """
 
     @classmethod
     def INPUT_TYPES(cls):
-        temp_files = list_temp_images()
+        temp_files = list_directory_images(folder_paths.get_temp_directory())
         return {
             "required": {
-                "source": (["url", "temp_file"],),
+                "source": (["url", "temp", "input", "output"],),
                 "url": ("STRING", {
                     "multiline": False,
                     "default": "",
@@ -295,7 +299,7 @@ class LoadImageByUrlOrPath:
 
     def load(self, source, url, image):
         """
-        Load image from URL or temp file and return with UI preview data
+        Load image from URL or local folder and return with UI preview data
         """
         try:
             if source == "url":
@@ -306,10 +310,10 @@ class LoadImageByUrlOrPath:
                 source_key = url.strip()
             else:
                 if not image or image == "(no images found)":
-                    raise ValueError("No temp image selected")
-                print(f"Loading image from temp: {image}")
-                img, name = load_image_from_temp(image)
-                source_key = image
+                    raise ValueError("No image selected")
+                print(f"Loading image from {source}: {image}")
+                img, name = load_image_from_folder(image, source)
+                source_key = f"{source}:{image}"
 
             # Convert to tensors
             img_out, mask_out = pil2tensor(img)
@@ -354,10 +358,10 @@ class LoadImageByUrlOrPath:
         """Force re-execution when source or selection changes"""
         if source == "url":
             return url
-        return image
+        return f"{source}:{image}"
 
 
-# API endpoint to load preview without executing workflow
+# API endpoints
 from aiohttp import web
 
 @server.PromptServer.instance.routes.post("/load_image_preview")
@@ -374,11 +378,11 @@ async def load_image_preview(request):
                 return web.json_response({"error": "URL is required"}, status=400)
             img, name = load_image_from_url(url)
             source_key = url
-        elif source == "temp_file":
+        elif source in ("temp", "input", "output"):
             if not image or image == "(no images found)":
-                return web.json_response({"error": "No temp image selected"}, status=400)
-            img, name = load_image_from_temp(image)
-            source_key = image
+                return web.json_response({"error": "No image selected"}, status=400)
+            img, name = load_image_from_folder(image, source)
+            source_key = f"{source}:{image}"
         else:
             return web.json_response({"error": "Invalid source type"}, status=400)
 
@@ -410,14 +414,18 @@ async def load_image_preview(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-@server.PromptServer.instance.routes.get("/load_image_list_temp")
-async def list_temp_images_endpoint(request):
-    """Endpoint to list available images in temp directory"""
+@server.PromptServer.instance.routes.get("/load_image_list_folder")
+async def list_folder_images_endpoint(request):
+    """Endpoint to list available images in a ComfyUI directory"""
     try:
-        files = list_temp_images()
+        folder = request.query.get("folder", "temp")
+        if folder not in ALLOWED_FOLDERS:
+            return web.json_response({"error": f"Unknown folder: {folder}"}, status=400)
+        files = list_directory_images(ALLOWED_FOLDERS[folder]())
         return web.json_response({"files": files})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
 
 # Node registration
 NODE_CLASS_MAPPINGS = {
