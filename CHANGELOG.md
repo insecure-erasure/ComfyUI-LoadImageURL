@@ -1,35 +1,23 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## Version 1.1.0 (2026-05-06)
+- **Breaking change**: Replaced free-text `url_or_path` input with structured inputs
+  - New `source` dropdown: `url` / `temp_file`
+  - `url`: string field for URLs (visible in url mode)
+  - `image`: combo dropdown listing images from ComfyUI's temp directory (visible in temp_file mode)
+- Removed support for arbitrary filesystem paths (security hardening)
+- Added `list_temp_images()` to enumerate image files in temp directory
+- Added `load_image_from_temp()` with path traversal protection
+- Removed `is_url()` auto-detection (no longer needed with explicit source selector)
+- Frontend widget toggle: `preview.js` now hides/shows `url` and `image` widgets based on `source` value
+- Preview now always saved as PNG to avoid format-specific kwarg issues (e.g. `quality` on BMP)
+- Updated `/load_image_preview` endpoint to accept `source`, `url`, and `image` parameters
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.0.0] - 2026-01-25
-
-### Added
+## Version 1.0.0 (2026-01-25)
 - Initial release
-- Load images from URLs with comprehensive security validation
-- Load images from local file paths
-- Live preview in node interface
-- Magic number verification for file type validation
-- Content-Type header validation against actual file type
-- Decompression bomb protection
-- Configurable size and pixel limits
-- Aspect ratio validation
-- HTTP redirect tracking and limits
-- HTTPS downgrade detection
-- Request timeout protection
-- Auto-protocol detection (adds https:// if missing)
-- imageio integration for safer image loading with PIL fallback
-- EXIF orientation support
-- Alpha channel mask generation
-- Comprehensive error handling and logging
-- Detailed README with security documentation
-- MIT License
-
-### Security
-- Defense-in-depth approach with multiple validation layers
-- Protection against malicious images
-- Safe defaults for size and redirect limits
-- Transparent logging of security events
+- URL and file path loading
+- Comprehensive security validation
+- Live preview support
+- imageio integration for safer loading
+- Auto-protocol detection
+- Redirect tracking and limits

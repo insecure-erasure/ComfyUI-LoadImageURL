@@ -1,6 +1,6 @@
 # ComfyUI Load Image (URL/Path) - Robust Edition
 
-A secure and feature-rich custom node for ComfyUI that loads images from URLs or local file paths with comprehensive security validation and live preview support.
+A secure and feature-rich custom node for ComfyUI that loads images from URLs or from ComfyUI's temp directory with comprehensive security validation and live preview support.
 
 ## Features
 
@@ -14,12 +14,14 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 - **Redirect protection**: Limits and logs HTTP redirects (max: 5)
 - **HTTPS downgrade detection**: Warns when redirected from HTTPS to HTTP
 - **Timeout protection**: Prevents hanging on unresponsive servers
+- **Path traversal protection**: Temp file loading rejects path separators and validates resolved paths
 
 ### 🖼️ Image Loading
-- **Dual source support**: Switch between URL and local file
-- **Protocol flexibility**: Auto-adds `https://` if protocol omitted
+- **Dual source support**: Switch between URL and temp file via dropdown
+- **Temp directory browsing**: Select images from ComfyUI's temp directory via combo widget
+- **Protocol flexibility**: Auto-adds `https://` if protocol omitted in URLs
 - **Safe image parsing**: Uses imageio (more secure) with PIL fallback
-- **Multi-format support**: PNG, JPEG, WebP, BMP, GIF, and more
+- **Multi-format support**: PNG, JPEG, WebP, BMP, GIF, TIFF, and more
 - **EXIF orientation**: Automatic rotation based on EXIF data
 - **Alpha channel handling**: Proper mask generation from transparency
 
@@ -42,7 +44,7 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 2. Clone or extract this repository:
 ```bash
    cd ComfyUI/custom_nodes/
-   git clone https://github.com/yourusername/comfyui-load-image-url-robust.git
+   git clone https://github.com/Insecure Erasure/comfyui-load-image-url-robust.git
 ```
 3. Restart ComfyUI
 
@@ -50,19 +52,19 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 
 ### Basic Usage
 1. Add "Load Image (URL/Path)" node from the `image` category
-2. Select source type:
+2. Select source type from the dropdown:
    - **url**: Load from web address
-   - **file**: Load from ComfyUI input folder
-3. Enter URL or select file
-4. Connect IMAGE and MASK outputs to other nodes
-5. Execute workflow - image preview appears in node
+   - **temp_file**: Load from ComfyUI's temp directory
+3. Depending on the source:
+   - For **url**: Enter the image URL in the text field
+   - For **temp_file**: Select an image from the dropdown (lists files in ComfyUI's temp directory)
+4. Click "Load Preview" to preview without executing, or connect IMAGE and MASK outputs and run the workflow
+5. Image preview appears in the node
 
 ### URL Examples
-```
 https://example.com/image.png
 example.com/photo.jpg  (auto-adds https://)
 https://domain.com/pic.webp?size=large
-```
 
 ### Advanced Configuration
 
@@ -81,9 +83,9 @@ load_image_from_url(
 
 | Input | Type | Description |
 |-------|------|-------------|
-| `source` | Dropdown | Choose "url" or "file" |
-| `url` | String | Web address of image (when source=url) |
-| `image` | Dropdown | Select from uploaded files (when source=file) |
+| `source` | Dropdown | Choose "url" or "temp_file" |
+| `url` | String | Web address of image (visible when source=url) |
+| `image` | Dropdown | Select from temp directory files (visible when source=temp_file) |
 
 ## Outputs
 
@@ -107,6 +109,9 @@ Limits total pixel count to prevent specially crafted images that expand to cons
 - **File size**: Checks `Content-Length` before download
 - **Pixel count**: Validates dimensions don't exceed limits
 - **Aspect ratio**: Rejects images with suspicious ratios (>100:1)
+
+### Path Traversal Protection
+When loading from temp directory, the node rejects any filename containing path separators and verifies the resolved path stays within the temp directory boundary.
 
 ### Network Security
 - **Timeout**: Prevents hanging on slow/dead servers
@@ -154,52 +159,43 @@ pip install torch pillow numpy requests imageio
 - Use image resizing service (e.g., Cloudinary)
 - Download and resize before loading
 
+### No Images in Temp File Dropdown
+- The temp directory is populated by other nodes during workflow execution
+- Run a workflow that generates images first, then refresh the node
+
 ## Technical Details
 
 ### Image Processing Pipeline
-1. **Download/Read**: Fetch from URL or read from disk
+1. **Download/Read**: Fetch from URL or read from temp directory
 2. **Magic Number Check**: Verify file type
-3. **Content Validation**: Cross-check headers vs content
+3. **Content Validation**: Cross-check headers vs content (URL mode)
 4. **Dimension Check**: Validate size and aspect ratio
 5. **Safe Loading**: imageio → PIL → numpy → torch
 6. **EXIF Rotation**: Auto-orient based on metadata
 7. **Channel Conversion**: RGB + Alpha mask extraction
 8. **Normalization**: Scale to 0-1 range
 9. **Tensor Conversion**: Convert to torch tensors
-10. **Preview Generation**: Save to temp for UI display
+10. **Preview Generation**: Save as PNG to temp for UI display
 
 ### Security Model
 - **Defense in depth**: Multiple validation layers
 - **Fail-safe defaults**: Conservative limits
 - **Transparent operation**: Logs warnings and redirects
 - **Graceful degradation**: Falls back safely on errors
+- **No arbitrary paths**: Only temp directory access for local files
 
 ## Development
 
 ### Project Structure
-```
 comfyui-load-image-url-robust/
-├── __init__.py           # Node registration
+├── init.py           # Node registration
 ├── nodes.py              # Main node implementation
 ├── js/
-│   └── preview.js        # Frontend preview logic
+│   └── preview.js        # Frontend preview + widget toggle logic
 ├── README.md             # This file
+├── CHANGELOG.md          # Version history
 ├── LICENSE               # MIT License
 └── requirements.txt      # Python dependencies
-```
-
-### Testing
-```python
-# Test URL loading
-from nodes import load_image_from_url
-img, name = load_image_from_url("https://example.com/test.png")
-print(f"Loaded: {name}, Size: {img.size}")
-
-# Test file loading
-from nodes import load_image_from_path
-img, name = load_image_from_path("/path/to/image.jpg")
-print(f"Loaded: {name}, Size: {img.size}")
-```
 
 ## License
 
@@ -207,24 +203,14 @@ MIT License - see LICENSE file for details
 
 ## Credits & Acknowledgments
 
-Built upon ideas from [comfyui-load-image-url](https://github.com/Braeden90000/comfyui-load-image-url) by Braeden90000, with some enhancements:
+Built upon ideas from [comfyui-load-image-url](https://github.com/Braeden90000/comfyui-load-image-url) by Braeden90000, with enhancements:
 - Comprehensive security validation (magic number verification, Content-Type validation, decompression bomb protection)
 - imageio integration for safer image loading with PIL fallback
 - Enhanced error handling and logging
 - Multiple validation layers (size limits, aspect ratio checks, redirect protection)
 - HTTPS downgrade detection
 - Request timeout protection
+- Path traversal protection for temp directory loading
 
 Additional credits:
 - Built for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) by comfyanonymous
-
-## Changelog
-
-### Version 1.0.0 (2026-01-25)
-- Initial release
-- URL and file path loading
-- Comprehensive security validation
-- Live preview support
-- imageio integration for safer loading
-- Auto-protocol detection
-- Redirect tracking and limits
