@@ -20,11 +20,51 @@ app.registerExtension({
             const MAX_IMAGE_HEIGHT = 192;    // Maximum image height
             // ==========================================
 
+            async function refreshTempFileList(node) {
+                const imageWidget = node.widgets?.find(w => w.name === "image");
+                if (!imageWidget) return;
+
+                try {
+                    const response = await fetch("/load_image_list_temp");
+                    const data = await response.json();
+
+                    if (data.files && data.files.length > 0) {
+                        imageWidget.options.values = data.files;
+                        // Keep current selection if still valid, otherwise select first
+                        if (!data.files.includes(imageWidget.value)) {
+                            imageWidget.value = data.files[0];
+                        }
+                    } else {
+                        imageWidget.options.values = ["(no images found)"];
+                        imageWidget.value = "(no images found)";
+                    }
+                    node.setDirtyCanvas(true, true);
+                } catch (error) {
+                    console.error("Error refreshing temp file list:", error);
+                }
+            }
+
             /**
              * Toggle visibility of url/image widgets based on source value.
-             * Hidden widgets are excluded from layout by switching their
-             * type to "hidden", a convention used across ComfyUI extensions.
+             * Uses widget property overrides that work reliably across
+             * ComfyUI/LiteGraph versions.
              */
+            function setWidgetHidden(widget, hidden) {
+                widget.hidden = hidden;
+                if (hidden) {
+                    // Store originals on first hide
+                    if (widget._origComputeSize === undefined) {
+                        widget._origComputeSize = widget.computeSize;
+                        widget._origDraw = widget.draw;
+                    }
+                    widget.computeSize = () => [0, -4]; // -4 compensates LiteGraph widget spacing
+                    widget.draw = () => {};
+                } else if (widget._origComputeSize !== undefined) {
+                    widget.computeSize = widget._origComputeSize;
+                    widget.draw = widget._origDraw;
+                }
+            }
+
             function updateWidgetVisibility(node) {
                 const sourceWidget = node.widgets?.find(w => w.name === "source");
                 const urlWidget = node.widgets?.find(w => w.name === "url");
@@ -34,22 +74,23 @@ app.registerExtension({
 
                 const isUrl = sourceWidget.value === "url";
 
-                // Store original types on first call so we can restore them
-                if (urlWidget._originalType === undefined) {
-                    urlWidget._originalType = urlWidget.type;
-                }
-                if (imageWidget._originalType === undefined) {
-                    imageWidget._originalType = imageWidget.type;
-                }
+                setWidgetHidden(urlWidget, !isUrl);
+                setWidgetHidden(imageWidget, isUrl);
 
-                urlWidget.type = isUrl ? urlWidget._originalType : "hidden";
-                imageWidget.type = isUrl ? "hidden" : imageWidget._originalType;
-
-                // Recalculate node size to account for hidden/shown widgets
+                // Recalculate node size
                 const targetSize = node.computeSize();
                 targetSize[0] = Math.max(targetSize[0], node.size[0]);
                 node.setSize(targetSize);
                 node.setDirtyCanvas(true, true);
+
+                // When switching to temp_file, refresh list and auto-preview
+                if (!isUrl) {
+                    refreshTempFileList(node).then(() => {
+                        if (imageWidget.value && imageWidget.value !== "(no images found)") {
+                            node.loadPreview();
+                        }
+                    });
+                }
             }
 
             // Store original onNodeCreated
@@ -75,6 +116,19 @@ app.registerExtension({
                     };
                 }
 
+                // Auto-preview when temp file selection changes
+                const imageWidget = this.widgets?.find(w => w.name === "image");
+                if (imageWidget) {
+                    const originalImgCallback = imageWidget.callback;
+                    const imgNode = this;
+                    imageWidget.callback = function(value) {
+                        if (originalImgCallback) originalImgCallback.call(this, value);
+                        if (value && value !== "(no images found)") {
+                            imgNode.loadPreview();
+                        }
+                    };
+                }
+
                 // Add Load button widget (after the other widgets)
                 const loadButton = this.addWidget("button", "Load Preview", null, () => {
                     this.loadPreview();
@@ -82,9 +136,12 @@ app.registerExtension({
                 loadButton.serialize = false;
                 this.loadButton = loadButton;
 
-                // Set initial visibility (defer to next frame so widgets are ready)
+                // Set initial visibility (defer to next frame so widgets are fully ready)
                 const node = this;
-                requestAnimationFrame(() => updateWidgetVisibility(node));
+                requestAnimationFrame(() => {
+                    updateWidgetVisibility(node);
+                    app.graph.setDirtyCanvas(true, true);
+                });
 
                 return result;
             };

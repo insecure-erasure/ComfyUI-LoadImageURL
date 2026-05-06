@@ -410,6 +410,15 @@ async def load_image_preview(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+@server.PromptServer.instance.routes.get("/load_image_list_temp")
+async def list_temp_images_endpoint(request):
+    """Endpoint to list available images in temp directory"""
+    try:
+        files = list_temp_images()
+        return web.json_response({"files": files})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 # Node registration
 NODE_CLASS_MAPPINGS = {
     "LoadImageByUrlOrPath": LoadImageByUrlOrPath
