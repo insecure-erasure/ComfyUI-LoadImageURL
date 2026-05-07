@@ -119,9 +119,9 @@ app.registerExtension({
                         }
                     });
                 } else {
-                    // Re-preview when switching back to url mode
-                    const urlWidget = node.widgets?.find(w => w.name === "url");
-                    if (urlWidget?.value?.trim()) {
+                    // Re-preview when switching back to url mode using last confirmed URL
+                    if (node._lastConfirmedUrl) {
+                        urlWidget.value = node._lastConfirmedUrl;
                         node.loadPreview();
                     }
                 }
@@ -138,6 +138,7 @@ app.registerExtension({
                 this._previewImgHeight = 0;
                 this._previewVisible = false;
                 this._previewImgSrc = null;
+                this._lastConfirmedUrl = null;
 
                 // Listen for source changes
                 const sourceWidget = this.widgets?.find(w => w.name === "source");
@@ -171,17 +172,77 @@ app.registerExtension({
                     urlWidget.callback = function(value) {
                         if (originalUrlCallback) originalUrlCallback.call(this, value);
                         if (value && value.trim()) {
+                            urlNode._lastConfirmedUrl = value.trim();
                             urlNode.loadPreview();
                         }
                     };
                 }
 
-                // Add Load button widget
-                const loadButton = this.addWidget("button", "Load Preview", null, () => {
-                    this.loadPreview();
+                // File upload button: opens a file picker, uploads to ComfyUI input,
+                // switches source to input and selects the uploaded file
+                const uploadButton = this.addWidget("button", "Choose file to upload", null, () => {
+                    const fileInput = document.createElement("input");
+                    fileInput.type = "file";
+                    fileInput.accept = "image/*";
+                    fileInput.style.display = "none";
+                    document.body.appendChild(fileInput);
+
+                    fileInput.onchange = async () => {
+                        const file = fileInput.files?.[0];
+                        document.body.removeChild(fileInput);
+                        if (!file) return;
+
+                        try {
+                            const formData = new FormData();
+                            formData.append("image", file, file.name);
+                            formData.append("type", "input");
+                            formData.append("overwrite", "false");
+
+                            const response = await fetch("/upload/image", {
+                                method: "POST",
+                                body: formData,
+                            });
+
+                            if (!response.ok) {
+                                const err = await response.text();
+                                alert(`Upload failed: ${err}`);
+                                return;
+                            }
+
+                            const data = await response.json();
+                            // data.name may include a subfolder prefix (e.g. "subdir/file.png")
+                            // We only want the basename for the combo widget
+                            const uploadedName = data.name.split("/").pop().split("\\").pop();
+
+                            // Switch source to input
+                            const sourceWidget = this.widgets?.find(w => w.name === "source");
+                            const imageWidget = this.widgets?.find(w => w.name === "image");
+                            if (!sourceWidget || !imageWidget) return;
+
+                            sourceWidget.value = "input";
+
+                            // Refresh file list, then force-select the uploaded file
+                            await refreshFileList(this);
+
+                            // Ensure the uploaded file is in the list even if
+                            // refreshFileList did not find it yet
+                            if (!imageWidget.options.values.includes(uploadedName)) {
+                                imageWidget.options.values.unshift(uploadedName);
+                            }
+                            imageWidget.value = uploadedName;
+
+                            // Sync visibility and trigger preview
+                            updateWidgetVisibility(this);
+
+                        } catch (error) {
+                            console.error("Error uploading file:", error);
+                            alert(`Error uploading file: ${error.message}`);
+                        }
+                    };
+
+                    fileInput.click();
                 });
-                loadButton.serialize = false;
-                this.loadButton = loadButton;
+                uploadButton.serialize = false;
 
                 // Set initial visibility
                 const node = this;
@@ -365,7 +426,7 @@ app.registerExtension({
             nodeType.prototype.onExecuted = function(message) {
                 const result = onExecuted?.apply(this, arguments);
                 this.loadPreview();
-            return result;
+                return result;
             };
         }
     }
