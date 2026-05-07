@@ -5,7 +5,6 @@ from io import BytesIO
 import os
 import numpy as np
 import folder_paths
-import hashlib
 import server
 
 try:
@@ -68,6 +67,31 @@ def normalize_image_type(type_str):
     if type_str in ['jpg', 'jpeg']:
         return 'jpeg'
     return type_str
+
+
+PREVIEW_PREFIX = "insecure-erasure.loadimage."
+VALID_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
+
+
+def build_preview_filename(url):
+    """
+    Build a preview filename from a URL.
+
+    Extracts the basename from the URL path (before query string), strips its
+    original extension, and produces a .png filename with PREVIEW_PREFIX.
+    The preview is always saved as PNG regardless of the source format.
+
+    Examples:
+        https://example.com/photo.jpg?w=100  ->  insecure-erasure.loadimage.photo.png
+        https://example.com/image            ->  insecure-erasure.loadimage.image.png
+    """
+    from urllib.parse import urlparse
+    path = urlparse(url).path
+    basename = os.path.basename(path) or "image"
+    name, _ = os.path.splitext(basename)
+    if not name:
+        name = "image"
+    return PREVIEW_PREFIX + name + ".png"
 
 
 def normalize_url(url):
@@ -198,17 +222,22 @@ def load_image_from_url(url, timeout=10, max_size_mb=100, max_redirects=5, max_p
     # Load image safely
     img = load_image_safe(BytesIO(content), max_pixels)
 
-    # Generate filename from URL
-    file_name = response.url.split('/')[-1].split('?')[0]
-    if not file_name or '.' not in file_name:
-        file_name = f"downloaded_image.{img_type}"
+    # Generate preview filename from URL
+    file_name = build_preview_filename(response.url)
 
     session.close()
     return img, file_name
 
 
-def list_directory_images(directory):
-    """List image files in the given directory"""
+def list_directory_images(directory, exclude_preview_prefix=True):
+    """List image files in the given directory.
+
+    Args:
+        directory: Path to the directory to list.
+        exclude_preview_prefix: When True, skip files starting with 'insecure-erasure.loadimage.'
+            or 'rgthree' (intended for the temp directory). Set to False for
+            input/output directories so user-uploaded files are never hidden.
+    """
     if not os.path.isdir(directory):
         return []
 
@@ -217,7 +246,9 @@ def list_directory_images(directory):
     for f in os.listdir(directory):
         if os.path.isfile(os.path.join(directory, f)):
             _, ext = os.path.splitext(f)
-            if ext.lower() in valid_extensions and not f.startswith(('_preview_','rgthree')):
+            if ext.lower() in valid_extensions:
+                if exclude_preview_prefix and f.startswith((PREVIEW_PREFIX, 'rgthree')):
+                    continue
                 files.append(f)
     return sorted(files)
 
@@ -321,16 +352,17 @@ class LoadImageByUrlOrPath:
             img_out, mask_out = pil2tensor(img)
 
             # Save to temp directory for preview
-            source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
-            temp_filename = f"_preview_{source_hash}_{name}"
-
             temp_dir = folder_paths.get_temp_directory()
+            if source == "url":
+                # name already has the prefix from build_preview_filename
+                temp_filename = name
+            else:
+                temp_filename = PREVIEW_PREFIX + name
             temp_path = os.path.join(temp_dir, temp_filename)
 
-            # Save image for UI preview (as PNG to avoid format-specific kwarg issues)
+            # Save image for UI preview as PNG (safe, lossless)
             preview_img = img.convert("RGB") if img.mode not in ("RGB", "RGBA") else img
-            preview_img.save(temp_path + ".png", format="PNG")
-            temp_filename = temp_filename + ".png"
+            preview_img.save(temp_path, format="PNG")
 
             print(f"Image loaded successfully: {img.size[0]}x{img.size[1]}, mode: {img.mode}")
 
@@ -379,15 +411,15 @@ async def load_image_preview(request):
             return web.json_response({"error": "Invalid source type"}, status=400)
 
         # Save to temp directory for preview
-        source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
-        temp_filename = f"_preview_{source_hash}_{name}"
-
         temp_dir = folder_paths.get_temp_directory()
+        if source == "url":
+            temp_filename = name
+        else:
+            temp_filename = PREVIEW_PREFIX + name
         temp_path = os.path.join(temp_dir, temp_filename)
 
         preview_img = img.convert("RGB") if img.mode not in ("RGB", "RGBA") else img
-        preview_img.save(temp_path + ".png", format="PNG")
-        temp_filename = temp_filename + ".png"
+        preview_img.save(temp_path, format="PNG")
 
         return web.json_response({
             "success": True,
@@ -413,7 +445,10 @@ async def list_folder_images_endpoint(request):
         folder = request.query.get("folder", "temp")
         if folder not in ALLOWED_FOLDERS:
             return web.json_response({"error": f"Unknown folder: {folder}"}, status=400)
-        files = list_directory_images(ALLOWED_FOLDERS[folder]())
+        files = list_directory_images(
+            ALLOWED_FOLDERS[folder](),
+            exclude_preview_prefix=(folder == "temp")
+        )
         return web.json_response({"files": files})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)

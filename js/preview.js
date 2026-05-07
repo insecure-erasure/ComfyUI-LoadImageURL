@@ -420,6 +420,24 @@ app.registerExtension({
                 }
             };
 
+            // Restore preview after workflow load or tab switch
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function(config) {
+                const result = onConfigure?.apply(this, arguments);
+                const sourceWidget = this.widgets?.find(w => w.name === "source");
+                const urlWidget = this.widgets?.find(w => w.name === "url");
+                const imageWidget = this.widgets?.find(w => w.name === "image");
+                requestAnimationFrame(() => {
+                    if (sourceWidget?.value === "url" && urlWidget?.value?.trim()) {
+                        this._lastConfirmedUrl = urlWidget.value.trim();
+                        this.loadPreview();
+                    } else if (sourceWidget?.value !== "url" && imageWidget?.value && imageWidget.value !== "(no images found)") {
+                        this.loadPreview();
+                    }
+                });
+                return result;
+            };
+
             // Update preview after node execution
             const onExecuted = nodeType.prototype.onExecuted;
 
