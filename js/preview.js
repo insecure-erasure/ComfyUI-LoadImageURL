@@ -182,6 +182,8 @@ app.registerExtension({
                     onDrawForeground.apply(this, arguments);
                 }
 
+                if (this.flags?.collapsed) return;
+
                 if (!this._previewVisible || !this._previewImgElement) {
                     return;
                 }
@@ -343,40 +345,8 @@ app.registerExtension({
 
             nodeType.prototype.onExecuted = function(message) {
                 const result = onExecuted?.apply(this, arguments);
-
-                // Clear previous preview before loading new one
-                clearPreview(this);
-
-                if (message?.images && message.images.length > 0) {
-                    const imageData = message.images[0];
-
-                    const params = new URLSearchParams({
-                        filename: imageData.filename,
-                        type: imageData.type,
-                        subfolder: imageData.subfolder || ""
-                    });
-
-                    const imageUrl = api.apiURL(`/view?${params.toString()}`);
-                    const node = this;
-
-                    const img = new Image();
-                    img.onload = () => {
-                        node._previewImgWidth = img.naturalWidth;
-                        node._previewImgHeight = img.naturalHeight;
-                        node._previewImgElement = img;
-                        node._previewVisible = true;
-                        node._updatePreviewSize();
-                    };
-
-                    img.onerror = () => {
-                        console.error("Failed to load preview image");
-                        clearPreview(node);
-                    };
-
-                    img.src = imageUrl;
-                }
-
-                return result;
+                this.loadPreview();
+            return result;
             };
         }
     }

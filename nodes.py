@@ -217,7 +217,7 @@ def list_directory_images(directory):
     for f in os.listdir(directory):
         if os.path.isfile(os.path.join(directory, f)):
             _, ext = os.path.splitext(f)
-            if ext.lower() in valid_extensions and not f.startswith('preview_'):
+            if ext.lower() in valid_extensions and not f.startswith(('_preview_','rgthree')):
                 files.append(f)
     return sorted(files)
 
@@ -287,6 +287,8 @@ class LoadImageByUrlOrPath:
                     "default": "",
                     "placeholder": "https://example.com/image.png"
                 }),
+            },
+            "optional": {
                 "image": (temp_files if temp_files else ["(no images found)"],),
             }
         }
@@ -297,7 +299,7 @@ class LoadImageByUrlOrPath:
     CATEGORY = "image"
     OUTPUT_NODE = False
 
-    def load(self, source, url, image):
+    def load(self, source, url, image=None):
         """
         Load image from URL or local folder and return with UI preview data
         """
@@ -320,7 +322,7 @@ class LoadImageByUrlOrPath:
 
             # Save to temp directory for preview
             source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
-            temp_filename = f"preview_{source_hash}_{name}"
+            temp_filename = f"_preview_{source_hash}_{name}"
 
             temp_dir = folder_paths.get_temp_directory()
             temp_path = os.path.join(temp_dir, temp_filename)
@@ -332,17 +334,7 @@ class LoadImageByUrlOrPath:
 
             print(f"Image loaded successfully: {img.size[0]}x{img.size[1]}, mode: {img.mode}")
 
-            # Return with UI preview metadata
-            return {
-                "ui": {
-                    "images": [{
-                        "filename": temp_filename,
-                        "subfolder": "",
-                        "type": "temp"
-                    }]
-                },
-                "result": (img_out, mask_out)
-            }
+            return (img_out, mask_out)
 
         except requests.TooManyRedirects:
             raise RuntimeError("Too many redirects (max: 5)")
@@ -354,7 +346,7 @@ class LoadImageByUrlOrPath:
             raise RuntimeError(f"Error loading image: {str(e)}")
 
     @classmethod
-    def IS_CHANGED(cls, source, url, image):
+    def IS_CHANGED(cls, source, url, image=None):
         """Force re-execution when source or selection changes"""
         if source == "url":
             return url
@@ -388,7 +380,7 @@ async def load_image_preview(request):
 
         # Save to temp directory for preview
         source_hash = hashlib.md5(source_key.encode()).hexdigest()[:10]
-        temp_filename = f"preview_{source_hash}_{name}"
+        temp_filename = f"_preview_{source_hash}_{name}"
 
         temp_dir = folder_paths.get_temp_directory()
         temp_path = os.path.join(temp_dir, temp_filename)
