@@ -118,6 +118,12 @@ app.registerExtension({
                             node.loadPreview();
                         }
                     });
+                } else {
+                    // Re-preview when switching back to url mode
+                    const urlWidget = node.widgets?.find(w => w.name === "url");
+                    if (urlWidget?.value?.trim()) {
+                        node.loadPreview();
+                    }
                 }
             }
 
@@ -153,6 +159,19 @@ app.registerExtension({
                         if (originalImgCallback) originalImgCallback.call(this, value);
                         if (value && value !== "(no images found)") {
                             imgNode.loadPreview();
+                        }
+                    };
+                }
+
+                // Auto-preview when URL is confirmed (Enter / focus lost)
+                const urlWidget = this.widgets?.find(w => w.name === "url");
+                if (urlWidget) {
+                    const originalUrlCallback = urlWidget.callback;
+                    const urlNode = this;
+                    urlWidget.callback = function(value) {
+                        if (originalUrlCallback) originalUrlCallback.call(this, value);
+                        if (value && value.trim()) {
+                            urlNode.loadPreview();
                         }
                     };
                 }
