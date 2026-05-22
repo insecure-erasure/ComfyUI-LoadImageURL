@@ -44,7 +44,7 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 2. Clone or extract this repository:
 ```bash
    cd ComfyUI/custom_nodes/
-   git clone https://github.com/Insecure Erasure/comfyui-load-image-url-robust.git
+   git clone https://github.com/insecure-erasure/ComfyUI-LoadImageURL.git
 ```
 3. Restart ComfyUI
 
@@ -187,7 +187,7 @@ pip install torch pillow numpy requests imageio
 ## Development
 
 ### Project Structure
-comfyui-load-image-url-robust/
+ComfyUI-LoadImageURL/
 ├── init.py           # Node registration
 ├── nodes.py              # Main node implementation
 ├── js/

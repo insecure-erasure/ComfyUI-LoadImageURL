@@ -1,5 +1,5 @@
 [project]
-name = "comfyui-load-image-url-robust"
+name = "ComfyUI-LoadImageURL"
 version = "1.0.0"
 description = "Secure and robust image loading from URLs or local paths for ComfyUI with live preview"
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.9"
 license = {text = "MIT"}
 keywords = ["comfyui", "image", "url", "loader", "security", "ai", "stable-diffusion"]
 authors = [
-    {name = "Insecure Erasure"}
+    {name = "Insecure Erasure", email = "insecure.erasure@proton.me"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -35,10 +35,10 @@ security = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Insecure Erasure/comfyui-load-image-url-robust"
-Repository = "https://github.com/Insecure Erasure/comfyui-load-image-url-robust"
-Issues = "https://github.com/Insecure Erasure/comfyui-load-image-url-robust/issues"
-Changelog = "https://github.com/Insecure Erasure/comfyui-load-image-url-robust/blob/main/README.md#changelog"
+Homepage = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
+Repository = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
+Issues = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/issues"
+Changelog = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/blob/main/README.md#changelog"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -48,6 +48,6 @@ build-backend = "setuptools.build_meta"
 packages = ["comfyui_load_image_url_robust"]
 
 [tool.comfy]
-PublisherId = "Insecure Erasure"
+PublisherId = "insecure-erasure"
 DisplayName = "Load Image (URL/Path)"
 Icon = ""
