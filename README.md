@@ -1,6 +1,6 @@
 # ComfyUI Load Image (URL/Path) - Robust Edition
 
-A secure and feature-rich custom node for ComfyUI that loads images from URLs or from ComfyUI's temp directory with comprehensive security validation and live preview support.
+A secure and feature-rich custom node for ComfyUI that loads images from URLs or from ComfyUI's managed directories (temp, input, output) with comprehensive security validation and live preview support.
 
 ## Features
 
@@ -14,11 +14,11 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 - **Redirect protection**: Limits and logs HTTP redirects (max: 5)
 - **HTTPS downgrade detection**: Warns when redirected from HTTPS to HTTP
 - **Timeout protection**: Prevents hanging on unresponsive servers
-- **Path traversal protection**: Temp file loading rejects path separators and validates resolved paths
+- **Path traversal protection**: Local file loading rejects path separators and validates resolved paths stay within the selected directory
 
 ### 🖼️ Image Loading
-- **Dual source support**: Switch between URL and temp file via dropdown
-- **Temp directory browsing**: Select images from ComfyUI's temp directory via combo widget
+- **Multi-source support**: Switch between URL, temp, input, and output via dropdown
+- **Directory browsing**: Select images from ComfyUI's temp, input, or output directories via combo widget
 - **Protocol flexibility**: Auto-adds `https://` if protocol omitted in URLs
 - **Safe image parsing**: Uses imageio (more secure) with PIL fallback
 - **Multi-format support**: PNG, JPEG, WebP, BMP, GIF, TIFF, and more
@@ -54,10 +54,12 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 1. Add "Load Image (URL/Path)" node from the `image` category
 2. Select source type from the dropdown:
    - **url**: Load from web address
-   - **temp_file**: Load from ComfyUI's temp directory
+   - **temp**: Load from ComfyUI's temp directory
+   - **input**: Load from ComfyUI's input directory
+   - **output**: Load from ComfyUI's output directory
 3. Depending on the source:
    - For **url**: Enter the image URL in the text field
-   - For **temp_file**: Select an image from the dropdown (lists files in ComfyUI's temp directory)
+   - For **temp / input / output**: Select an image from the dropdown
 4. Click "Load Preview" to preview without executing, or connect IMAGE and MASK outputs and run the workflow
 5. Image preview appears in the node
 
@@ -83,9 +85,9 @@ load_image_from_url(
 
 | Input | Type | Description |
 |-------|------|-------------|
-| `source` | Dropdown | Choose "url" or "temp_file" |
+| `source` | Dropdown | Choose `url`, `temp`, `input`, or `output` |
 | `url` | String | Web address of image (visible when source=url) |
-| `image` | Dropdown | Select from temp directory files (visible when source=temp_file) |
+| `image` | Dropdown | Select from directory files (visible when source=temp/input/output) |
 
 ## Outputs
 
@@ -111,7 +113,7 @@ Limits total pixel count to prevent specially crafted images that expand to cons
 - **Aspect ratio**: Rejects images with suspicious ratios (>100:1)
 
 ### Path Traversal Protection
-When loading from temp directory, the node rejects any filename containing path separators and verifies the resolved path stays within the temp directory boundary.
+When loading from a local directory, the node rejects any filename containing path separators and verifies the resolved path stays within the selected directory boundary (temp, input, or output).
 
 ### Network Security
 - **Timeout**: Prevents hanging on slow/dead servers
@@ -141,7 +143,7 @@ pip install torch pillow numpy requests imageio
 - Ensure JavaScript is enabled in browser
 - Clear browser cache and refresh
 - Check browser console for errors
-- Verify image saved to temp directory
+- Verify image saved to the expected directory (temp, input, or output)
 
 ### Download Failures
 - Check URL is accessible in browser
@@ -159,14 +161,15 @@ pip install torch pillow numpy requests imageio
 - Use image resizing service (e.g., Cloudinary)
 - Download and resize before loading
 
-### No Images in Temp File Dropdown
+### No Images in Directory Dropdown
 - The temp directory is populated by other nodes during workflow execution
-- Run a workflow that generates images first, then refresh the node
+- The input directory contains images uploaded via ComfyUI's file upload
+- Run a workflow that generates images first (for temp/output), or upload an image (for input), then refresh the node
 
 ## Technical Details
 
 ### Image Processing Pipeline
-1. **Download/Read**: Fetch from URL or read from temp directory
+1. **Download/Read**: Fetch from URL or read from local directory (temp, input, or output)
 2. **Magic Number Check**: Verify file type
 3. **Content Validation**: Cross-check headers vs content (URL mode)
 4. **Dimension Check**: Validate size and aspect ratio
@@ -182,7 +185,7 @@ pip install torch pillow numpy requests imageio
 - **Fail-safe defaults**: Conservative limits
 - **Transparent operation**: Logs warnings and redirects
 - **Graceful degradation**: Falls back safely on errors
-- **No arbitrary paths**: Only temp directory access for local files
+- **No arbitrary paths**: Only ComfyUI-managed directories (temp, input, output) for local files
 
 ## Development
 
@@ -210,7 +213,7 @@ Built upon ideas from [comfyui-load-image-url](https://github.com/Braeden90000/c
 - Multiple validation layers (size limits, aspect ratio checks, redirect protection)
 - HTTPS downgrade detection
 - Request timeout protection
-- Path traversal protection for temp directory loading
+- Path traversal protection for local directory loading (temp, input, output)
 
 Additional credits:
 - Built for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) by comfyanonymous
