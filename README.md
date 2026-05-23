@@ -1,4 +1,4 @@
-# ComfyUI Load Image (URL/Path) - Robust Edition
+# ComfyUI Load Image (URL/Path)
 
 A secure and feature-rich custom node for ComfyUI that loads images from URLs or from ComfyUI's managed directories (temp, input, output) with comprehensive security validation and live preview support.
 
@@ -35,7 +35,7 @@ A secure and feature-rich custom node for ComfyUI that loads images from URLs or
 
 ### Via ComfyUI Manager (Recommended)
 1. Open ComfyUI Manager
-2. Search for "Load Image URL Path Robust"
+2. Search for "Load Image URL Path"
 3. Click Install
 4. Restart ComfyUI
 

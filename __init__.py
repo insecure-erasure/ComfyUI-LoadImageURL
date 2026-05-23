@@ -1,5 +1,5 @@
 """
-ComfyUI Load Image (URL/Path) - Robust Edition
+ComfyUI Load Image (URL/Path)
 
 A secure and robust custom node for loading images from URLs or local paths
 with comprehensive validation and live preview support.
