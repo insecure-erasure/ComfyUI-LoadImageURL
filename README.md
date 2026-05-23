@@ -1,6 +1,6 @@
 # ComfyUI Load Image (URL/Path)
 
-A secure and feature-rich custom node for ComfyUI that loads images from URLs or from ComfyUI's managed directories (temp, input, output) with comprehensive security validation and live preview support.
+A secure and feature-rich custom node for ComfyUI that loads images from URLs, local file uploads, or ComfyUI's managed directories (temp, input, output) with comprehensive security validation and live preview support.
 
 ## Features
 
