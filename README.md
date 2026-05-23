@@ -191,7 +191,7 @@ pip install torch pillow numpy requests imageio
 
 ### Project Structure
 ComfyUI-LoadImageURL/
-├── init.py           # Node registration
+├── __init__.py       # Node registration
 ├── nodes.py              # Main node implementation
 ├── js/
 │   └── preview.js        # Frontend preview + widget toggle logic
