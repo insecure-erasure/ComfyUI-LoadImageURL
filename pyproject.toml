@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-LoadImageURL"
 version = "1.0.0"
-description = "Secure and robust image loading from URLs or local paths for ComfyUI with live preview"
+description = "Load images in ComfyUI from URLs, local file uploads, or ComfyUI managed directories (temp, input, output), with security validation and live preview"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -14,10 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Graphics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -38,14 +34,14 @@ security = [
 Homepage = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
 Repository = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
 Issues = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/issues"
-Changelog = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/blob/master/README.md#changelog"
+Changelog = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/blob/master/CHANGELOG.md"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["comfyui_load_image_url_robust"]
+packages = ["comfyui_load_image_url"]
 
 [tool.comfy]
 PublisherId = "insecure-erasure"
