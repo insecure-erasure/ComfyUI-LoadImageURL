@@ -38,7 +38,7 @@ security = [
 Homepage = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
 Repository = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL"
 Issues = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/issues"
-Changelog = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/blob/main/README.md#changelog"
+Changelog = "https://github.com/insecure-erasure/ComfyUI-LoadImageURL/blob/master/README.md#changelog"
 
 [build-system]
 requires = ["setuptools>=61.0"]
