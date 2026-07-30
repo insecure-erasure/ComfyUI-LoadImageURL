@@ -71,6 +71,7 @@ def normalize_image_type(type_str):
 
 
 PREVIEW_PREFIX = "ComfyUI_temp_loadimage_"
+EXCLUDED_PREFIXES = {PREVIEW_PREFIX, 'rgthree'}
 VALID_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
 
 
@@ -232,8 +233,8 @@ def list_directory_images(directory, exclude_preview_prefix=True):
 
     Args:
         directory: Path to the directory to list.
-        exclude_preview_prefix: When True, skip files starting with PREVIEW_PREFIX
-            or 'rgthree' (intended for the temp directory). Set to False for
+        exclude_preview_prefix: When True, skip files starting with any prefix in
+            EXCLUDED_PREFIXES (intended for the temp directory). Set to False for
             input/output directories so user-uploaded files are never hidden.
     """
     if not os.path.isdir(directory):
@@ -245,7 +246,7 @@ def list_directory_images(directory, exclude_preview_prefix=True):
         if os.path.isfile(os.path.join(directory, f)):
             _, ext = os.path.splitext(f)
             if ext.lower() in valid_extensions:
-                if exclude_preview_prefix and f.startswith((PREVIEW_PREFIX, 'rgthree')):
+                if exclude_preview_prefix and f.startswith(tuple(EXCLUDED_PREFIXES)):
                     continue
                 files.append(f)
     return sorted(files)
