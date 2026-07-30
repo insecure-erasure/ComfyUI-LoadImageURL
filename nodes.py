@@ -1,3 +1,4 @@
+import hashlib
 from PIL import Image, ImageSequence, ImageOps
 import torch
 import requests
@@ -69,29 +70,26 @@ def normalize_image_type(type_str):
     return type_str
 
 
-PREVIEW_PREFIX = "insecure-erasure.loadimage."
+PREVIEW_PREFIX = "ComfyUI_temp_"
 VALID_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.tif'}
 
 
 def build_preview_filename(url):
     """
-    Build a preview filename from a URL.
+    Build a preview filename from a URL using ComfyUI's naming convention.
 
-    Extracts the basename from the URL path (before query string), strips its
-    original extension, and produces a .png filename with PREVIEW_PREFIX.
+    Strips the query string from the URL, computes its MD5 hash, and produces
+    a deterministic .png filename with PREVIEW_PREFIX.
     The preview is always saved as PNG regardless of the source format.
 
     Examples:
-        https://example.com/photo.jpg?w=100  ->  insecure-erasure.loadimage.photo.png
-        https://example.com/image            ->  insecure-erasure.loadimage.image.png
+        https://example.com/photo.jpg?w=100  ->  ComfyUI_temp_<md5>.png
+        https://example.com/image            ->  ComfyUI_temp_<md5>.png
     """
     from urllib.parse import urlparse
-    path = urlparse(url).path
-    basename = os.path.basename(path) or "image"
-    name, _ = os.path.splitext(basename)
-    if not name:
-        name = "image"
-    return PREVIEW_PREFIX + name + ".png"
+    clean_url = urlparse(url)._replace(query="").geturl()
+    url_hash = hashlib.md5(clean_url.encode()).hexdigest()[-12:]
+    return f"{PREVIEW_PREFIX}{url_hash}.png"
 
 
 def normalize_url(url):
