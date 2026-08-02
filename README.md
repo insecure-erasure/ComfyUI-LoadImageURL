@@ -166,6 +166,14 @@ pip install torch pillow numpy requests imageio
 - The input directory contains images uploaded via ComfyUI's file upload
 - Run a workflow that generates images first (for temp/output), or upload an image (for input), then refresh the node
 
+### "Value not in list: image" Validation Errors
+- Older versions validated the selected file against a backend list built only
+  from the temp directory, so files chosen from `input` or `output` were
+  rejected even though they existed and previewed correctly. Versions with
+  `VALIDATE_INPUTS` validate against the folder selected in the `source`
+  dropdown instead. If you still see this error, update the custom node and
+  reload the workflow.
+
 ## Technical Details
 
 ### Image Processing Pipeline

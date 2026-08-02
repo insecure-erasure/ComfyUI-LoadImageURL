@@ -259,6 +259,35 @@ ALLOWED_FOLDERS = {
 }
 
 
+def resolve_image_path(filename, folder_key):
+    """
+    Resolve a plain filename against one of ComfyUI's managed directories.
+
+    Only accepts plain filenames (no path separators). Resolves against
+    the target directory and verifies the result does not escape it.
+
+    Args:
+        filename: Image filename (basename only, no path components)
+        folder_key: One of 'temp', 'input', 'output'
+
+    Returns:
+        str: Absolute path to the file.
+    """
+    if folder_key not in ALLOWED_FOLDERS:
+        raise ValueError(f"Unknown folder: {folder_key}")
+
+    if os.sep in filename or '/' in filename or '\\' in filename:
+        raise ValueError(f"Invalid filename (path separators not allowed): {filename}")
+
+    base_dir = ALLOWED_FOLDERS[folder_key]()
+    file_path = os.path.normpath(os.path.join(base_dir, filename))
+
+    if not file_path.startswith(os.path.normpath(base_dir) + os.sep) and file_path != os.path.normpath(base_dir):
+        raise ValueError(f"Path traversal detected: {filename}")
+
+    return file_path
+
+
 def load_image_from_folder(filename, folder_key, max_pixels=100000000):
     """
     Load image from one of ComfyUI's managed directories.
@@ -274,17 +303,7 @@ def load_image_from_folder(filename, folder_key, max_pixels=100000000):
     Returns:
         tuple: (PIL Image object, filename)
     """
-    if folder_key not in ALLOWED_FOLDERS:
-        raise ValueError(f"Unknown folder: {folder_key}")
-
-    if os.sep in filename or '/' in filename or '\\' in filename:
-        raise ValueError(f"Invalid filename (path separators not allowed): {filename}")
-
-    base_dir = ALLOWED_FOLDERS[folder_key]()
-    file_path = os.path.normpath(os.path.join(base_dir, filename))
-
-    if not file_path.startswith(os.path.normpath(base_dir) + os.sep) and file_path != os.path.normpath(base_dir):
-        raise ValueError(f"Path traversal detected: {filename}")
+    file_path = resolve_image_path(filename, folder_key)
 
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found in {folder_key} directory: {filename}")
@@ -322,6 +341,43 @@ class LoadImageByUrlOrPath:
                 "image": (temp_files if temp_files else ["(no images found)"],),
             }
         }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, source, url="", image=None):
+        """Validate inputs without relying on the backend's static combo list.
+
+        ComfyUI skips its built-in combo-membership check for any input listed
+        here. That check compares the submitted value against the list returned
+        by INPUT_TYPES, which only ever reflects the temp directory at
+        node-definition time. The frontend refreshes the `image` combo against
+        the folder actually selected via /load_image_list_folder, so the two
+        lists can diverge: a file chosen from `input` or `output` never appears
+        in the backend list and is rejected with "Value not in list".
+
+        Instead of membership, validate against the folder selected by the user
+        and let the real existence check happen here (and again, as a safety
+        net, inside load_image_from_folder at execution time).
+        """
+        if source == "url":
+            if not url or not url.strip():
+                return "URL is required"
+            return True
+
+        if source not in ALLOWED_FOLDERS:
+            return f"Unknown source: {source}"
+
+        if not image or image == "(no images found)":
+            return "No image selected"
+
+        try:
+            file_path = resolve_image_path(image, source)
+        except ValueError as e:
+            return str(e)
+
+        if not os.path.exists(file_path):
+            return f"File not found in {source} directory: {image}"
+
+        return True
 
     RETURN_TYPES = ("IMAGE", "MASK")
     RETURN_NAMES = ("image", "mask")

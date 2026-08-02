@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- "Value not in list: image" prompt validation errors when loading from
+  `input`/`output`/`temp` folders. The backend combo list only contained files
+  from `temp` at node-definition time, so any file selected in the UI from
+  another folder was rejected by ComfyUI's validation even though it existed
+  and previewed fine. Added `VALIDATE_INPUTS` so validation checks the selected
+  file against the folder chosen via the `source` dropdown (the same list the
+  frontend uses) instead of the stale backend list.
+
 ## [1.0.0] - 2026-05-23
 
 ### Added
