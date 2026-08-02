@@ -195,21 +195,6 @@ pip install torch pillow numpy requests imageio
 - **Graceful degradation**: Falls back safely on errors
 - **No arbitrary paths**: Only ComfyUI-managed directories (temp, input, output) for local files
 
-## Development
-
-### Project Structure
-ComfyUI-LoadImageURL/
-├── __init__.py          # Node registration (NODE_CLASS_MAPPINGS, WEB_DIRECTORY)
-├── nodes.py             # Main node implementation
-├── js/
-│   └── preview.js       # Frontend preview + widget toggle logic
-├── README.md            # This file
-├── CHANGELOG.md         # Version history
-├── LICENSE              # MIT License
-├── pyproject.toml       # Package metadata + ComfyUI Manager config
-├── requirements.txt     # Python dependencies
-└── .gitignore           # Ignored files
-
 ## License
 
 MIT License - see LICENSE file for details
